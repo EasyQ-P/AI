@@ -1,0 +1,16 @@
+# 로컬 개발용 학습서버 레지스트리 DB. 서비스 DB(5432)와 겹치지 않게 5433을 쓴다.
+# 실행: docker compose -f docker-compose.dev.yml up -d registry-db
+services:
+  registry-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: easyq_registry
+      POSTGRES_USER: easyq
+      POSTGRES_PASSWORD: easyq_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - easyq-registry-db:/var/lib/postgresql/data
+
+volumes:
+  easyq-registry-db:

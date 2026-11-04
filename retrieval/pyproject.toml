@@ -1,0 +1,17 @@
+[project]
+name = "retrieval"
+version = "0.1.0"
+description = "EasyQ 공용 검색 패키지: 교안 · 발화 청킹, 키워드 색인, 하이브리드 검색, 겹침 계산 (6.1.5)"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+# 형태소 분석 키워드 색인 (Kiwi). 겹침 계산 · 설정만 쓸 때는 필요 없다.
+keyword = ["kiwipiepy>=0.18"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/retrieval"]
