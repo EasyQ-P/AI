@@ -6,8 +6,10 @@ on:
   push:
     branches: [dev, main]
 
+# Postgres 전체 테스트는 레지스트리 DB 테이블이 생길 때, torch(CPU) 테스트는 학습 · 추론 코드가 생길 때 추가한다.
 jobs:
-  lint-test:
+  ruff:
+    name: ruff
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,5 +21,33 @@ jobs:
         run: uv sync --all-packages --group dev
       - name: Ruff
         run: uv run ruff check .
+
+  fast-test:
+    name: 빠른 검사 (DB·torch 없이)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install (GPU 패키지 제외)
+        run: uv sync --all-packages --group dev
       - name: Pytest
         run: uv run pytest -q
+
+  pip-audit:
+    name: 의존성 취약점 (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      # uv.lock 기준 외부 패키지만 검사한다. 우리 패키지(easyq-trainer · retrieval)는 PyPI에 없어 뺀다.
+      - name: Export locked requirements
+        run: uv export --all-packages --group dev --no-emit-workspace --no-hashes --no-header --format requirements-txt -o requirements-audit.txt
+      # 목록에 의존성이 모두 고정돼 있어 설치 없이(--disable-pip --no-deps) 바로 검사한다
+      - name: pip-audit
+        run: uvx pip-audit --strict --disable-pip --no-deps -r requirements-audit.txt
