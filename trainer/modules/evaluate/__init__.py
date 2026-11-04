@@ -1,13 +1,19 @@
 """평가모듈 (L2) — T-09, T-10. 담당: 최의찬, 엄윤종."""
 
+import math
+
 
 def select_threshold(scores: list[float], labels: list[int], max_fpr: float = 0.04) -> float:
-    """질문별 최고 점수 · 라벨로 검증셋 FPR ≤ max_fpr를 만족하는 가장 낮은 τ를 고른다."""
+    """질문별 최고 점수 · 라벨로 검증셋 FPR ≤ max_fpr를 만족하는 가장 낮은 τ를 고른다.
+
+    점수가 τ와 같으면 답변으로 본다. 만족하는 값이 없으면 최고 점수 바로 위의 값을 돌려줘
+    모든 질문을 이관한다(4.3). inf를 쓰지 않으므로 JSON · manifest에 그대로 넣을 수 있다.
+    """
     pairs = sorted(zip(scores, labels, strict=True), reverse=True)
     negatives = sum(1 for _, y in pairs if y == 0)
     if negatives == 0:
         return min(scores)
-    best = float("inf")
+    best = math.nextafter(pairs[0][0], math.inf)
     fp = 0
     for i, (s, y) in enumerate(pairs):
         if y == 0:

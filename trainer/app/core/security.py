@@ -10,5 +10,5 @@ from app.core.errors import Code, TrainerError
 
 async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     expected = get_settings().trainer_api_key
-    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
+    if not expected or not x_api_key or not hmac.compare_digest(x_api_key, expected):
         raise TrainerError(Code.API_KEY, "invalid api key")
