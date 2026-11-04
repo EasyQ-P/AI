@@ -20,6 +20,8 @@ EasyQ: 강연 중 청중 질문에 교안 · 발화 근거로 AI가 답하고, �
 
 ## 구조
 - `trainer/app/` 학습서버 API(FastAPI, `/api/v1`), `core/`(설정 · X-API-Key · 오류 코드 · 공통 응답)
+  - `api/` 7.4 라우터(파일당 리소스 하나), `db/` 레지스트리 DB 연결, `jobs/` 작업 실행기, `inference_main.py` 판정 추론 프로세스(127.0.0.1:8001 내부 전용)
+- `trainer/migrations/` 레지스트리 DB Alembic 마이그레이션(`trainer/alembic.ini`)
 - `trainer/modules/` dataset · train · export · evaluate · inference · fault (함수 이름 · 입출력은 7.4.29 그대로)
 - `retrieval/src/retrieval/` 청킹 · 키워드 · 하이브리드 검색(RRF) · 겹침 계산 · 검색 설정 버전(rc-vN)
 - `scripts/data/` 학습 데이터 구축 스크립트
@@ -40,7 +42,11 @@ uv sync --all-packages --group dev --extra gpu  # 학과 서버
 uv run ruff check .
 uv run pytest
 uv run uvicorn app.main:app --app-dir trainer --host 127.0.0.1 --port 8000
+uv run uvicorn app.inference_main:app --app-dir trainer --host 127.0.0.1 --port 8001  # 판정 추론
+docker compose -f docker-compose.dev.yml up -d registry-db  # 로컬 레지스트리 DB(5433)
+uv run alembic -c trainer/alembic.ini upgrade head
 ```
+- `.env`의 `TRAINER_ENV=dev`가 아니면 API 키가 없거나 `change-me`일 때 서버가 시작하지 않는다.
 
 ## Git
 - `main`은 PR로만. 작업은 `dev`에서 `feature/짧은-설명` 브랜치를 따서 PR.
