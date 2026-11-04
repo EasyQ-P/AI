@@ -1,6 +1,14 @@
 """학습서버 오류 코드 (8.4). 응답은 공통 형식 {result_code, result_msg, data}."""
 
+import logging
 from enum import IntEnum
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class Code(IntEnum):
@@ -28,6 +36,9 @@ HTTP_STATUS = {
     Code.REGISTER_HELD: 409,
 }
 
+# 요청 형식 오류(422)를 어떤 코드로 돌려줄지: 학습 파라미터를 받는 API는 603, 그 밖은 601 (8.4.3)
+PARAM_PATH_PREFIXES = ("/api/v1/train-configs", "/api/v1/train-jobs")
+
 
 class TrainerError(Exception):
     def __init__(self, code: Code, msg: str = "", data: object = None):
@@ -44,3 +55,41 @@ class TrainerError(Exception):
 
 def ok(data: object = None, msg: str = "") -> dict:
     return {"result_code": 200, "result_msg": msg, "data": data}
+
+
+def not_implemented(api: str) -> TrainerError:
+    """뼈대만 있는 API용. 구현 전까지 600으로 응답한다."""
+    return TrainerError(Code.INTERNAL, f"not implemented: {api}")
+
+
+def _body(code: Code, msg: str, data: object = None) -> dict:
+    return {"result_code": int(code), "result_msg": msg, "data": data}
+
+
+def validation_code(path: str) -> Code:
+    return Code.PARAM_OUT_OF_RANGE if path.startswith(PARAM_PATH_PREFIXES) else Code.DATASET_INVALID
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    """모든 오류를 공통 응답 형식으로 바꾼다."""
+
+    @app.exception_handler(TrainerError)
+    async def trainer_error(_: Request, exc: TrainerError) -> JSONResponse:
+        return JSONResponse(status_code=exc.http_status, content=exc.body())
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # 입력값(input)은 원문이 섞일 수 있어 돌려주지 않고 위치 · 사유만 남긴다
+        errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", "")} for e in exc.errors()]
+        code = validation_code(request.url.path)
+        return JSONResponse(status_code=400, content=_body(code, "invalid request", errors))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = {401: Code.API_KEY, 404: Code.NOT_FOUND}.get(exc.status_code, Code.INTERNAL)
+        return JSONResponse(status_code=exc.status_code, content=_body(code, str(exc.detail)))
+
+    @app.exception_handler(Exception)
+    async def unexpected(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled error: %s", type(exc).__name__)
+        return JSONResponse(status_code=500, content=_body(Code.INTERNAL, "internal error"))

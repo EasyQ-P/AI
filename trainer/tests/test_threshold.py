@@ -1,3 +1,5 @@
+import math
+
 from modules.evaluate import select_threshold
 
 
@@ -8,3 +10,13 @@ def test_threshold_keeps_fpr_under_limit():
     tau = select_threshold(scores, labels, max_fpr=0.04)
     assert tau == 0.9
     assert select_threshold(scores, labels, max_fpr=0.1) == 0.7
+
+
+def test_threshold_above_max_when_nothing_qualifies():
+    # 최고점이 음성이면 어떤 τ도 FPR 0%를 못 맞춘다 → 최고점 바로 위(유한한 값)로 모두 이관
+    scores = [0.99, 0.5, 0.2]
+    labels = [0, 1, 0]
+    tau = select_threshold(scores, labels, max_fpr=0.0)
+    assert math.isfinite(tau)
+    assert tau > max(scores)
+    assert all(s < tau for s in scores)
