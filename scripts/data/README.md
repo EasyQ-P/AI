@@ -11,3 +11,6 @@
 
 ## 스크립트
 - `extract_ocw_transcripts.py`: `data/raw/mit_ocw/<강좌>/<강좌>.zip`에서 영상 전사본 PDF를 꺼내 `transcripts/`에 강의 번호 순(L01 · PS3 · QR1 …)으로 정리하고 `transcripts_manifest.csv`(출처 · 라이선스)를 만든다. `--apply` 없이 돌리면 미리보기.
+- `ocw_transcript_text.py`: 정리한 전사본 PDF에서 머리말 · CC 안내문 · 효과음 태그를 지우고 화자를 역할(강사/학생)로 바꿔 강사 발화만 뽑는다(3.2.2 (1) 2단계). 결과는 `data/interim/mit_ocw/transcripts/<course_id>.jsonl`과 강의 메타 `lectures.jsonl`(3.3.3). PyMuPDF가 필요하므로 먼저 `uv sync --all-packages --group dev --group data`.
+
+테스트: `uv run python -m pytest scripts/data/tests`
