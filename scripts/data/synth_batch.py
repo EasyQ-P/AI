@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPTS = {"rewrite": "ko_rewrite_v1", "questions": "question_synth_v2"}
+DEFAULT_PROMPTS = {"rewrite": "ko_rewrite_v1", "questions": "question_synth_v3"}
 SPLIT_OF = {"6.006_S20": "TRAIN", "6.046J_S15": "TRAIN", "6.034_F10": "TRAIN", "6.0001_F16": "VALIDATION"}
 
 LABEL_OF = {"ANSWERABLE": "ANSWERABLE", "OUT_OF_SCOPE": "INSUFFICIENT_EVIDENCE", "OPINION": "OPINION"}
@@ -35,10 +35,14 @@ QUESTION_TYPES = {"개념", "방법", "이유", "비교", "예시", "운영", "�
 TOPIC_TYPES = ["개념", "방법", "이유", "비교", "예시"]
 LOGISTICS_RE = re.compile(
     r"\b(homework|problem sets?|psets?|exams?|quiz(?:zes)?|midterms?|recitations?|office hours|piazza|"
-    r"deadline|grades?|grading|syllabus|lecture notes|textbook|course staff|TAs?|"
-    r"(?:next|last) (?:lecture|time|week|class))\b",
+    r"deadline|grading|syllabus|lecture notes|textbook|course staff|TAs?|"
+    r"(?:next|last) (?:lecture|week|class))\b",
     re.IGNORECASE,
 )
+# 'last time', 'next time (through the loop)', 'grade(s)'는 뺐다.
+# 복습 말투 · 반복문 · 변수 이름(grades)을 수업 안내로 잘못 잡았다(measure-6.0001-v2 점검).
+# 의견 질문에 몰리는 말투 단서(보세요 · 생각하세요 · 교수님 · 추천 · 낫 · 좋아 · 괜찮). 라벨별 비율을 점검한다.
+OPINION_CUE_RE = re.compile(r"(보세요|생각하세요|교수님|추천|낫|좋아|괜찮)")
 QUESTION_LEN = (15, 35)
 HANGUL_RE = re.compile(r"[가-힣]")
 ALPHA_RE = re.compile(r"[A-Za-z]")
@@ -118,6 +122,10 @@ def quality_report(pairs: list[dict]) -> dict:
                 "n": len(ps),
                 "mean_len": round(sum(len(p["question_text"]) for p in ps) / len(ps), 1),
                 "mean_overlap": round(sum(overlap(p["question_text"], p["evidence_text"]) for p in ps) / len(ps), 3),
+                # 의견 말투 지름길 점검: 이 비율이 라벨마다 크게 다르면 모델이 말투만 보고 라벨을 맞힐 수 있다.
+                "opinion_cue_rate": round(
+                    sum(bool(OPINION_CUE_RE.search(p["question_text"])) for p in ps) / len(ps), 3
+                ),
             }
     for p in pairs:
         report["question_type"][p["question_type"]] = report["question_type"].get(p["question_type"], 0) + 1

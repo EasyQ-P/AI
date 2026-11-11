@@ -69,6 +69,18 @@ def test_has_logistics():
     assert not has_logistics("The final answer is n squared.")
 
 
+def test_has_logistics_ignores_review_phrases_loops_and_variable_names():
+    assert not has_logistics("As we saw last time, the next time through the loop adds an a.")
+    assert not has_logistics("delete the entry from the dictionary grades, then print grades")
+
+
+def test_quality_report_opinion_cue_rate():
+    ans = to_pairs(good_row(), chunk("6.006_S20_L03_T0001"), "b1")
+    report = quality_report(ans)["by_gen_method"]
+    assert report["OPINION"]["opinion_cue_rate"] == 1.0  # "교수님은 …"
+    assert report["ANSWERABLE"]["opinion_cue_rate"] == 0.0
+
+
 def test_validate_output():
     assert validate_output(good_row()) == []
     bad = good_row(questions=good_row()["questions"][:2])

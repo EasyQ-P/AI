@@ -13,6 +13,6 @@
 - `extract_ocw_transcripts.py`: `data/raw/mit_ocw/<강좌>/<강좌>.zip`에서 영상 전사본 PDF를 꺼내 `transcripts/`에 강의 번호 순(L01 · PS3 · QR1 …)으로 정리하고 `transcripts_manifest.csv`(출처 · 라이선스)를 만든다. `--apply` 없이 돌리면 미리보기.
 - `ocw_transcript_text.py`: 정리한 전사본 PDF에서 머리말 · CC 안내문 · 효과음 태그를 지우고 화자를 역할(강사/학생)로 바꿔 강사 발화만 뽑는다(3.2.2 (1) 2단계). 결과는 `data/interim/mit_ocw/transcripts/<course_id>.jsonl`과 강의 메타 `lectures.jsonl`(3.3.3). PyMuPDF가 필요하므로 먼저 `uv sync --all-packages --group dev --group data`.
 - `ocw_transcript_chunks.py`: 강사 발화를 강의별 말하는 속도(전체 단어 수 ÷ 영상 길이)로 정한 30초 분량 단어 수에 맞춰 문장 경계에서 자른다(3.2.2 (1) 3단계). 결과는 `data/interim/mit_ocw/chunks/<course_id>.jsonl`, 근거 ID는 `<lecture_id>_T0001` 형식.
-- `synth_batch.py` + `prompts/`: Sonnet 합성 배치 준비(`prepare`: 청크 선택 · 목표 질문 유형 배정) · 검증(`ingest`: 형식 · 길이 검사, 3.3.3 학습 쌍 변환, 라벨별 길이 · 단어 겹침 · 유형 분포를 `meta.json`에 기록). 프롬프트: `ko_rewrite_v1`(한국어 구어체 변환), `question_synth_v1`/`v2`(질문 합성). LLM 호출은 스크립트 밖에서 하고 모델 ID를 `--model`로 남긴다. AI Hub 데이터에는 쓰지 않는다.
+- `synth_batch.py` + `prompts/`: Sonnet 합성 배치 준비(`prepare`: 청크 선택 · 목표 질문 유형 배정) · 검증(`ingest`: 형식 · 길이 검사, 3.3.3 학습 쌍 변환, 라벨별 길이 · 단어 겹침 · 유형 분포를 `meta.json`에 기록). 프롬프트: `ko_rewrite_v1`(한국어 구어체 변환), `question_synth_v1`/`v2`/`v3`(질문 합성, 기본값은 v3). LLM 호출은 스크립트 밖에서 하고 모델 ID를 `--model`로 남긴다. AI Hub 데이터에는 쓰지 않는다.
 
 테스트: `uv run python -m pytest scripts/data/tests`
