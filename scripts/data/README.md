@@ -15,4 +15,9 @@
 - `ocw_transcript_chunks.py`: 강사 발화를 강의별 말하는 속도(전체 단어 수 ÷ 영상 길이)로 정한 30초 분량 단어 수에 맞춰 문장 경계에서 자른다(3.2.2 (1) 3단계). 결과는 `data/interim/mit_ocw/chunks/<course_id>.jsonl`, 근거 ID는 `<lecture_id>_T0001` 형식.
 - `synth_batch.py` + `prompts/`: Sonnet 합성 배치 준비(`prepare`: 청크 선택 · 목표 질문 유형 배정) · 검증(`ingest`: 형식 · 길이 검사, 3.3.3 학습 쌍 변환, 라벨별 길이 · 단어 겹침 · 유형 분포를 `meta.json`에 기록). 프롬프트: `ko_rewrite_v1`(한국어 구어체 변환), `question_synth_v1`/`v2`/`v3`(질문 합성, 기본값은 v3). LLM 호출은 스크립트 밖에서 하고 모델 ID를 `--model`로 남긴다. AI Hub 데이터에는 쓰지 않는다.
 
+- `ocw_slide_chunks.py`: 강좌 zip 안의 강의 교안(슬라이드 · 노트 PDF, PPTX도 같은 규칙)을 쪽 단위 교안 조각으로 나눈다(3.2.3, 회의안건 B4). 1쪽 = 1조각, 쪽 넘김 · 겹침 없음, 최대 약 350토큰(bge-m3), 넘으면 문단 → 문장 → 토큰 순으로 분할, 10토큰 미만 쪽은 제외하고 개수 기록, 제3자 저작물(All rights reserved) 표시 문단 제외, 발표자 노트 제외. 결과는 `data/interim/mit_ocw/slides/<course_id>.jsonl`(lecture_id, source_key, page_no, chunk_index, text)과 `stats.json`. 6.046J 필기 노트(writtenlec)는 스캔 이미지라 쓰지 않는다.
+- `squad_sample.py`: SQuAD 2.0 train에서 답 있음 250 + 답 없음 250을 뽑는다(지문당 1문항, 문서당 라벨별 최대 2문항). 정답(답 없음은 plausible_answers) 문장을 가운데 두고 약 148단어(교안 조각 중앙값, B5 추천)까지 문장 단위로 늘려 자르고, 350토큰을 넘지 않는다. 결과는 `data/interim/squad2/<이름>/pairs.jsonl`(3.3.3 필드) · `meta.json`.
+- 두 스크립트는 bge-m3 토크나이저(`tokenizers`)를 쓴다. 처음 실행할 때 Hugging Face에서 `BAAI/bge-m3`의 tokenizer.json을 받는다(`--tokenizer`로 로컬 경로 지정 가능).
+- `synth_batch.py prepare --lectures ... --part-size 50`: 고른 강의의 청크 전부를 배치로 만들고 50청크 묶음 파일(`parts/in_NN.jsonl`)도 만든다(B3). 강의 선정 기준은 프로젝트 노트 `학습강의_선정안.md`.
+
 테스트: `uv run python -m pytest scripts/data/tests`

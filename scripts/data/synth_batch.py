@@ -14,6 +14,9 @@ LLM 호출은 이 스크립트 밖에서 한다(Sonnet). 이 스크립트는
 사용:
     uv run python scripts/data/synth_batch.py prepare --batch trial-6.006-v1 --course 6.006_S20 --n 30
     uv run python scripts/data/synth_batch.py ingest --batch trial-6.006-v1 --model <모델 ID>
+    # 고른 강의의 청크 전부(회의안건 B3), 50청크씩 묶음 파일(parts/in_NN.jsonl)도 만든다
+    uv run python scripts/data/synth_batch.py prepare --batch train-ocw-v3_1 \
+        --lectures 6.006_S20_L07 6.006_S20_L13 --question-prompt question_synth_v3_1 --part-size 50
 """
 
 import argparse
@@ -42,7 +45,10 @@ LOGISTICS_RE = re.compile(
 # 'last time', 'next time (through the loop)', 'grade(s)'는 뺐다.
 # 복습 말투 · 반복문 · 변수 이름(grades)을 수업 안내로 잘못 잡았다(measure-6.0001-v2 점검).
 # 의견 질문에 몰리는 말투 단서(보세요 · 생각하세요 · 교수님 · 추천 · 낫 · 좋아 · 괜찮). 라벨별 비율을 점검한다.
-OPINION_CUE_RE = re.compile(r"(보세요|생각하세요|교수님|추천|낫|좋아|괜찮)")
+OPINION_CUE_RE = re.compile(r"(보세요|생각하세요|교수님|추천|낫|나아|나은|좋아|좋을까|괜찮)")
+# 단어 겹침 확인선(v3 30청크 시험 평균: 답변 가능 0.54, 근거 부족 0.38 → v3_1에서 차이를 줄이는 것이 목표)
+ANS_MAX_OVERLAP = 0.65
+OOS_MIN_OVERLAP = 0.20
 QUESTION_LEN = (15, 35)
 HANGUL_RE = re.compile(r"[가-힣]")
 ALPHA_RE = re.compile(r"[A-Za-z]")
@@ -67,6 +73,16 @@ def select_chunks(chunks: list[dict], n: int, seed: int, exclude_lectures: set[s
         if c["lecture_id"].rsplit("_", 1)[-1].startswith("L") and c["lecture_id"] not in exclude_lectures
     ]
     picked = random.Random(seed).sample(pool, min(n, len(pool)))
+    return sorted(picked, key=lambda c: c["evidence_id"])
+
+
+def lecture_chunks(chunks_dir: Path, lectures: list[str]) -> list[dict]:
+    """고른 강의의 청크 전부(회의안건 B3: 강의 단위로 고르고 고른 강의는 전부 변환). 강좌가 여럿이어도 된다."""
+    want = set(lectures)
+    courses = sorted({lid.rsplit("_", 1)[0] for lid in want})
+    picked = [c for course in courses for c in read_jsonl(chunks_dir / f"{course}.jsonl") if c["lecture_id"] in want]
+    if missing := want - {c["lecture_id"] for c in picked}:
+        sys.exit(f"청크가 없는 강의: {sorted(missing)}")
     return sorted(picked, key=lambda c: c["evidence_id"])
 
 
@@ -110,6 +126,28 @@ def tokens(text: str) -> set[str]:
 def overlap(question: str, evidence: str) -> float:
     q = tokens(question)
     return len(q & tokens(evidence)) / len(q) if q else 0.0
+
+
+def overlap_warnings(pairs: list[dict]) -> dict:
+    """질문-근거 단어 겹침이 라벨 지름길이 될 만한 쌍(question_synth_v3_1 규칙). 오류는 아니고 확인용 목록이다.
+
+    답변 가능 질문이 청크 말을 너무 많이 쓰거나(ANS_MAX_OVERLAP 초과),
+    근거 부족 질문이 청크 말을 거의 안 쓰면(OOS_MIN_OVERLAP 미만) 겹침만으로 라벨이 드러난다.
+    """
+    too_high = [
+        p["pair_id"]
+        for p in pairs
+        if p["gen_method"] == "ANSWERABLE" and overlap(p["question_text"], p["evidence_text"]) > ANS_MAX_OVERLAP
+    ]
+    too_low = [
+        p["pair_id"]
+        for p in pairs
+        if p["gen_method"] == "OUT_OF_SCOPE" and overlap(p["question_text"], p["evidence_text"]) < OOS_MIN_OVERLAP
+    ]
+    return {
+        "answerable_overlap_above": {"limit": ANS_MAX_OVERLAP, "pair_ids": too_high},
+        "out_of_scope_overlap_below": {"limit": OOS_MIN_OVERLAP, "pair_ids": too_low},
+    }
 
 
 def quality_report(pairs: list[dict]) -> dict:
@@ -201,24 +239,35 @@ def to_pairs(row: dict, src: dict, batch_id: str) -> list[dict]:
 
 
 def cmd_prepare(args) -> None:
-    if args.course not in SPLIT_OF:
-        sys.exit(f"{args.course}는 한국어 변환 대상이 아닙니다(시험 강좌는 영어 원문 그대로, 설계서 3.2.2).")
-    chunks = read_jsonl(args.chunks / f"{args.course}.jsonl")
-    picked = select_chunks(chunks, args.n, args.seed, set(args.exclude))
+    courses = sorted({lid.rsplit("_", 1)[0] for lid in args.lectures}) if args.lectures else [args.course]
+    if not courses or None in courses:
+        sys.exit("--course 또는 --lectures가 필요합니다.")
+    for course in courses:
+        if course not in SPLIT_OF:
+            sys.exit(f"{course}는 한국어 변환 대상이 아닙니다(시험 강좌는 영어 원문 그대로, 설계서 3.2.2).")
+    if args.lectures:
+        picked = lecture_chunks(args.chunks, args.lectures)
+    else:
+        picked = select_chunks(read_jsonl(args.chunks / f"{args.course}.jsonl"), args.n, args.seed, set(args.exclude))
     out = args.root / args.batch
     out.mkdir(parents=True, exist_ok=True)
     targets = assign_target_types([c["evidence_text"] for c in picked], args.seed)
-    write_jsonl(
-        out / "input.jsonl",
-        [
-            {**{k: c[k] for k in ("evidence_id", "lecture_id", "course_id", "evidence_text")}, "target_types": t}
-            for c, t in zip(picked, targets, strict=True)
-        ],
-    )
+    rows = [
+        {**{k: c[k] for k in ("evidence_id", "lecture_id", "course_id", "evidence_text")}, "target_types": t}
+        for c, t in zip(picked, targets, strict=True)
+    ]
+    write_jsonl(out / "input.jsonl", rows)
+    if args.part_size:
+        # 구독 한도 창마다 나눠 돌리기 위한 묶음 파일. LLM은 parts/in_NN.jsonl → parts/out_NN.jsonl을 만든다.
+        (out / "parts").mkdir(exist_ok=True)
+        for i in range(0, len(rows), args.part_size):
+            write_jsonl(out / "parts" / f"in_{i // args.part_size + 1:02d}.jsonl", rows[i : i + args.part_size])
     meta = {
         "batch_id": args.batch,
         "created": dt.date.today().isoformat(),
-        "course_id": args.course,
+        "course_id": courses[0] if len(courses) == 1 else courses,
+        "lectures": sorted(args.lectures) if args.lectures else None,
+        "part_size": args.part_size or None,
         "seed": args.seed,
         "excluded_lectures": sorted(args.exclude),
         "prompts": {"rewrite": args.rewrite_prompt, "questions": args.question_prompt},
@@ -267,6 +316,7 @@ def cmd_ingest(args) -> None:
             "missing": missing,
             "errors": errors,
             "quality": quality_report(pairs),
+            "overlap_warnings": overlap_warnings(pairs),
         }
     )
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -283,7 +333,9 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare")
     p.add_argument("--batch", required=True)
-    p.add_argument("--course", required=True)
+    p.add_argument("--course", help="강좌에서 --n개를 무작위로 고를 때")
+    p.add_argument("--lectures", nargs="*", default=None, help="이 강의들의 청크 전부(강좌 여럿 가능)")
+    p.add_argument("--part-size", type=int, default=0, help="이 크기로 parts/in_NN.jsonl 묶음도 만든다")
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--seed", type=int, default=20261111)
     p.add_argument("--chunks", type=Path, default=Path("data/interim/mit_ocw/chunks"))

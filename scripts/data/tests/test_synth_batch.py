@@ -1,10 +1,12 @@
 from collections import Counter
 
 from synth_batch import (
+    OPINION_CUE_RE,
     TOPIC_TYPES,
     assign_target_types,
     has_logistics,
     overlap,
+    overlap_warnings,
     quality_report,
     select_chunks,
     to_pairs,
@@ -74,6 +76,23 @@ def test_has_logistics_ignores_review_phrases_loops_and_variable_names():
     assert not has_logistics("delete the entry from the dictionary grades, then print grades")
 
 
+def test_overlap_warnings_flag_label_shortcuts():
+    pairs = to_pairs(good_row(), chunk("6.006_S20_L03_T0001"), "b1")
+    for p in pairs:
+        p["evidence_text"] = "정렬된 배열에서는 이진 탐색으로 찾을 수 있어요"
+    pairs[0]["question_text"] = "정렬된 배열에서는 이진 탐색으로 찾을 수 있어요?"  # 답변 가능: 청크 문장 그대로
+    pairs[1]["question_text"] = "해시 테이블은 왜 느려요?"  # 근거 부족: 청크 단어 없음
+    w = overlap_warnings(pairs)
+    assert w["answerable_overlap_above"]["pair_ids"] == [pairs[0]["pair_id"]]
+    assert w["out_of_scope_overlap_below"]["pair_ids"] == [pairs[1]["pair_id"]]
+
+
+def test_opinion_cue_re_catches_comparative_wording():
+    for text in ("for가 while보다 더 나아요?", "이 방법이 더 나은가요?", "이렇게 해도 괜찮을까요?", "교수님은 어때요?"):
+        assert OPINION_CUE_RE.search(text), text
+    assert not OPINION_CUE_RE.search("리스트는 어떻게 만들어요?")
+
+
 def test_quality_report_opinion_cue_rate():
     ans = to_pairs(good_row(), chunk("6.006_S20_L03_T0001"), "b1")
     report = quality_report(ans)["by_gen_method"]
@@ -110,3 +129,15 @@ def test_overlap_and_quality_report():
     report = quality_report(to_pairs(good_row(), chunk("6.006_S20_L03_T0001"), "b1"))
     assert set(report["by_gen_method"]) == {"ANSWERABLE", "OUT_OF_SCOPE", "OPINION"}
     assert report["question_type"]["의견"] == 1
+
+
+def test_lecture_chunks_takes_whole_lectures_across_courses(tmp_path):
+    from synth_batch import lecture_chunks, write_jsonl
+
+    def chunk(lid, i):
+        return {"evidence_id": f"{lid}_T{i:04d}", "lecture_id": lid, "course_id": lid.rsplit("_", 1)[0]}
+
+    write_jsonl(tmp_path / "A_S1.jsonl", [chunk("A_S1_L01", i) for i in (1, 2)] + [chunk("A_S1_L02", 1)])
+    write_jsonl(tmp_path / "B_F2.jsonl", [chunk("B_F2_L05", 1)])
+    got = lecture_chunks(tmp_path, ["A_S1_L01", "B_F2_L05"])
+    assert [c["evidence_id"] for c in got] == ["A_S1_L01_T0001", "A_S1_L01_T0002", "B_F2_L05_T0001"]

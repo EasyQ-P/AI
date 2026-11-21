@@ -178,6 +178,7 @@ dependencies = [
 [package.dev-dependencies]
 data = [
     { name = "pymupdf" },
+    { name = "tokenizers" },
 ]
 dev = [
     { name = "httpx" },
@@ -192,7 +193,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-data = [{ name = "pymupdf", specifier = ">=2.1" }]
+data = [
+    { name = "pymupdf", specifier = ">=2.1" },
+    { name = "tokenizers", specifier = ">=0.20" },
+]
 dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8" },
