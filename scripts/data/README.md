@@ -19,5 +19,6 @@
 - `squad_sample.py`: SQuAD 2.0 train에서 답 있음 250 + 답 없음 250을 뽑는다(지문당 1문항, 문서당 라벨별 최대 2문항). 정답(답 없음은 plausible_answers) 문장을 가운데 두고 약 148단어(교안 조각 중앙값, B5 추천)까지 문장 단위로 늘려 자르고, 350토큰을 넘지 않는다. 결과는 `data/interim/squad2/<이름>/pairs.jsonl`(3.3.3 필드) · `meta.json`.
 - 두 스크립트는 bge-m3 토크나이저(`tokenizers`)를 쓴다. 처음 실행할 때 Hugging Face에서 `BAAI/bge-m3`의 tokenizer.json을 받는다(`--tokenizer`로 로컬 경로 지정 가능).
 - `synth_batch.py prepare --lectures ... --part-size 50`: 고른 강의의 청크 전부를 배치로 만들고 50청크 묶음 파일(`parts/in_NN.jsonl`)도 만든다(B3). 강의 선정 기준은 프로젝트 노트 `학습강의_선정안.md`.
+- `sample_pairs.py`: 합성 쌍(`pairs.jsonl`)에서 라벨 비율(기본 168/168/144)을 맞춰 청크당 1문항, 강의 비율대로 seed로 뽑는다. 예: `uv run python scripts/data/sample_pairs.py --batch val-6.0001-v3_1 --name val-480`
 
 테스트: `uv run python -m pytest scripts/data/tests`
