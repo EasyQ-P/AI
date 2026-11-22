@@ -46,7 +46,7 @@ def assign_labels(eids: list[str], counts: dict[str, int], rng: random.Random) -
                 quota[lec] = 1
     labels = [lab for lab, n in counts.items() for _ in range(n)]
     rng.shuffle(labels)
-    return dict(zip(order, labels))
+    return dict(zip(order, labels, strict=True))
 
 
 def main() -> None:
