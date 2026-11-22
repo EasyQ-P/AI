@@ -17,9 +17,11 @@
 
 - `ocw_slide_chunks.py`: 강좌 zip 안의 강의 교안(슬라이드 · 노트 PDF, PPTX도 같은 규칙)을 쪽 단위 교안 조각으로 나눈다(3.2.3, 회의안건 B4). 1쪽 = 1조각, 쪽 넘김 · 겹침 없음, 최대 약 350토큰(bge-m3), 넘으면 문단 → 문장 → 토큰 순으로 분할, 10토큰 미만 쪽은 제외하고 개수 기록, 제3자 저작물(All rights reserved) 표시 문단 제외, 발표자 노트 제외. 결과는 `data/interim/mit_ocw/slides/<course_id>.jsonl`(lecture_id, source_key, page_no, chunk_index, text)과 `stats.json`. 6.046J 필기 노트(writtenlec)는 스캔 이미지라 쓰지 않는다.
 - `squad_sample.py`: SQuAD 2.0 train에서 답 있음 250 + 답 없음 250을 뽑는다(지문당 1문항, 문서당 라벨별 최대 2문항). 정답(답 없음은 plausible_answers) 문장을 가운데 두고 약 148단어(교안 조각 중앙값, B5 추천)까지 문장 단위로 늘려 자르고, 350토큰을 넘지 않는다. 결과는 `data/interim/squad2/<이름>/pairs.jsonl`(3.3.3 필드) · `meta.json`.
-- 두 스크립트는 bge-m3 토크나이저(`tokenizers`)를 쓴다. 처음 실행할 때 Hugging Face에서 `BAAI/bge-m3`의 tokenizer.json을 받는다(`--tokenizer`로 로컬 경로 지정 가능).
+- `aihub_sample.py`: AI Hub 「기계독해」 표준(정답 있음) 250 + 정답 없음 250을 SQuAD와 같은 방식으로 뽑는다(지문당 1문항, 문서당 라벨별 최대 2문항, `contains_aihub=true`). 정답 있음은 정답 문장 주변을 148어절 · 350토큰 이내로, 정답 없음은 지문을 같은 길이 조각으로 나눠 질문과 BM25 최상위 조각을 근거로 쓴다(임베딩 · 외부 API 없음, BM25 토큰은 kiwipiepy가 있으면 형태소, 없으면 글자 2-gram). 화면에는 개수 · 통계만 찍는다. 먼저 `--inspect`로 값 없이 키 구조만 확인한다. 결과는 `data/interim/aihub/<이름>/pairs.jsonl` · `meta.json`이고, `build_splits.py --aihub`로 합친다.
+- 위 스크립트들은 bge-m3 토크나이저(`tokenizers`)를 쓴다. 처음 실행할 때 Hugging Face에서 `BAAI/bge-m3`의 tokenizer.json을 받는다(`--tokenizer`로 로컬 경로 지정 가능).
 - `synth_batch.py prepare --lectures ... --part-size 50`: 고른 강의의 청크 전부를 배치로 만들고 50청크 묶음 파일(`parts/in_NN.jsonl`)도 만든다(B3). 강의 선정 기준은 프로젝트 노트 `학습강의_선정안.md`.
 - `sample_pairs.py`: 합성 쌍(`pairs.jsonl`)에서 라벨 비율(기본 168/168/144)을 맞춰 청크당 1문항, 강의 비율대로 seed로 뽑는다. 예: `uv run python scripts/data/sample_pairs.py --batch val-6.0001-v3_1 --name val-480`
+- `build_splits.py`: OCW 합성 쌍(700/700/600으로 seed 추출) + SQuAD 500을 3.3.3 학습 필드의 `train.jsonl`로, 검증 480을 평가 필드의 `validation.jsonl`(후보 20개 · gold_in_candidates는 검색 모듈 뒤에 채움)로 합쳐 `data/processed/<이름>/`에 둔다. 7.4.2 등록 전 단계. `--aihub`로 AI Hub 쌍도 넣을 수 있고, 이때 결과물도 AI Hub 데이터로 다룬다. AI Hub 행이 다른 입력에 섞이거나 검증셋에 AI Hub · SQuAD 행이 있으면 멈춘다.
 
 ## 검증셋 val-6.0001-v3_1 만든 순서 (2026-11-22)
 스크립트 하나로 다시 만들 수 없어 순서를 적어 둔다. 자세한 기록은 `data/interim/synth/val-6.0001-v3_1/RESUME.md`.

@@ -45,10 +45,12 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
 
 
 def cut_around(
-    context: str, char_pos: int, count: Callable[[str], int], target_words: int, max_tokens: int
+    context: str, char_pos: int, count: Callable[[str], int], target_words: int, max_tokens: int,
+    split: Callable[[str], list[tuple[int, int]]] = sentence_spans,
 ) -> tuple[str, int]:
-    """char_pos가 든 문장을 가운데 두고 앞뒤 문장을 번갈아 붙인다. (잘린 지문, 시작 글자 위치)"""
-    spans = sentence_spans(context)
+    """char_pos가 든 문장을 가운데 두고 앞뒤 문장을 번갈아 붙인다. (잘린 지문, 시작 글자 위치)
+    split: 문장 나누기 함수(기본은 영어용, AI Hub는 한국어용을 넘긴다)."""
+    spans = split(context)
     k = next((i for i, (s, e) in enumerate(spans) if s <= char_pos < e), len(spans) - 1)
     lo = hi = k
 
