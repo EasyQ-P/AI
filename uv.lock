@@ -177,6 +177,7 @@ dependencies = [
 
 [package.dev-dependencies]
 data = [
+    { name = "kiwipiepy" },
     { name = "pymupdf" },
     { name = "tokenizers" },
 ]
@@ -194,6 +195,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 data = [
+    { name = "kiwipiepy", specifier = ">=0.24.1" },
     { name = "pymupdf", specifier = ">=2.1" },
     { name = "tokenizers", specifier = ">=0.20" },
 ]

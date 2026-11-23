@@ -17,6 +17,7 @@ retrieval = { workspace = true }
 
 [dependency-groups]
 data = [
+    "kiwipiepy>=0.24.1",
     "pymupdf>=2.1",
     "tokenizers>=0.20",
 ]

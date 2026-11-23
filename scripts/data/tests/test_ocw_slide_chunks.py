@@ -1,7 +1,15 @@
 import io
 import zipfile
 
-from ocw_slide_chunks import chunk_document, chunk_page, find_docs, page_paragraphs, read_pptx_pages
+import pytest
+from ocw_slide_chunks import (
+    chunk_document,
+    chunk_page,
+    find_docs,
+    is_low_content,
+    page_paragraphs,
+    read_pptx_pages,
+)
 
 
 def count(text: str) -> int:
@@ -11,6 +19,15 @@ def count(text: str) -> int:
 def split_tokens(text: str, n: int) -> list[str]:
     w = text.split()
     return [" ".join(w[i : i + n]) for i in range(0, len(w), n)]
+
+
+def tail(text: str, n: int) -> str:
+    return " ".join(text.split()[-n:])
+
+
+def words(text: str) -> int:
+    """가짜 내용어 수: 두 글자 이상인 단어."""
+    return sum(len(w) > 1 for w in text.split())
 
 
 def test_short_page_is_one_chunk():
@@ -25,9 +42,9 @@ def test_long_page_splits_by_paragraph_then_sentence_then_token():
     assert chunk_page(["x " * 12], count, split_tokens, 5) == ["x x x x x", "x x x x x", "x x"]
 
 
-def test_no_overlap_and_no_page_crossing():
+def test_no_overlap_option_and_no_page_crossing():
     pages = [["alpha " * 9], ["beta " * 3]]
-    rows, st = chunk_document(pages, "C_L01", "D", count, split_tokens, max_tokens=5, min_page_tokens=2)
+    rows, st = chunk_document(pages, "C_L01", "D", count, split_tokens, max_tokens=5, content_words=words, min_chars=1)
     assert [r["source_key"] for r in rows] == ["C_L01_D1_1", "C_L01_D1_2", "C_L01_D2_1"]
     assert [r["page_no"] for r in rows] == [1, 1, 2]
     assert [r["chunk_index"] for r in rows] == [1, 2, 3]
@@ -35,10 +52,55 @@ def test_no_overlap_and_no_page_crossing():
     assert st["split_pages"] == 1
 
 
-def test_short_pages_skipped_and_counted():
-    rows, st = chunk_document([["tiny"], ["enough words here ok"]], "C_L01", "D", count, split_tokens, 50, 3)
-    assert [r["page_no"] for r in rows] == [2]
-    assert st["short_pages"] == 1
+def test_overlap_within_page_only():
+    page1 = " ".join(f"w{i}" for i in range(30))
+    pages = [[page1], [" ".join(f"v{i}" for i in range(6))]]
+    rows, st = chunk_document(pages, "C_L01", "D", count, split_tokens, 12, 3, tail, words, min_chars=1)
+    p1 = [r["text"].split() for r in rows if r["page_no"] == 1]
+    assert len(p1) > 1 and all(len(p) <= 12 for p in p1)
+    for prev, cur in zip(p1, p1[1:], strict=False):
+        assert cur[:3] == prev[-3:]  # 이웃 조각이 3토큰 겹침
+    assert sorted({w for p in p1 for w in p}) == sorted(page1.split())  # 빠진 단어 없음
+    # 쪽 사이 겹침 없음
+    assert [r["text"].split() for r in rows if r["page_no"] == 2] == [[f"v{i}" for i in range(6)]]
+    assert st["max_chunk_tokens"] <= 12 and st["split_pages"] == 1
+
+
+def test_overlap_sentence_split_stays_under_max():
+    para = " ".join(f"s{i} a b c." for i in range(10))  # 문장 10개, 각 4토큰
+    pieces = chunk_page([para], count, split_tokens, 10, 2, tail)
+    assert len(pieces) > 1 and all(count(p) <= 10 for p in pieces)
+    assert all(p.split()[:2] == q.split()[-2:] for q, p in zip(pieces, pieces[1:], strict=False))
+
+
+def test_overlap_needs_tail_and_sane_size():
+    with pytest.raises(ValueError):
+        chunk_page(["x " * 20], count, split_tokens, 10, 2, None)
+    with pytest.raises(ValueError):
+        chunk_page(["x " * 20], count, split_tokens, 10, 5, tail)
+
+
+def test_low_content_rule():
+    assert is_low_content("short", words)  # 20자 미만
+    assert is_low_content("a b c d e f g h i j k l m n o p q r", words)  # 20자 이상이지만 내용어 0
+    assert is_low_content("Lecture  12   and  x  y  z  w", words, min_content_words=4)
+    assert not is_low_content("Dynamic programming uses memoization", words)
+
+
+def test_low_content_pages_excluded_and_counted():
+    pages = [["12"], ["x = 1 + 2 + 3 + 4 + 5 + 6"], ["Binary search halves the interval"], ["tiny"]]
+    rows, st = chunk_document(pages, "C_L01", "D", count, split_tokens, 50, content_words=words)
+    assert [r["source_key"] for r in rows] == ["C_L01_D3_1"]  # 다음 쪽에 붙이지 않음
+    assert st["page_count"] == 4 and st["chunk_count"] == 1 and st["excluded_low_content"] == 3
+
+
+def test_kiwi_content_words_if_installed():
+    pytest.importorskip("kiwipiepy")
+    from ocw_slide_chunks import content_word_count
+
+    assert content_word_count("동적 계획법은 부분 문제의 답을 저장한다") >= 3
+    assert content_word_count("x = y + z") == 0
+    assert content_word_count("Big-O notation 표기법") >= 3
 
 
 def test_third_party_and_boilerplate_removed():

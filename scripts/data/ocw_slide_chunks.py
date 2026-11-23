@@ -1,9 +1,14 @@
 """MIT OCW 교안(슬라이드 · 강의 노트 PDF/PPTX)을 쪽 단위 교안 조각으로 나눈다 (설계서 3.2.3, 회의안건 B4).
 
-규칙 (2026-11-21 확정)
-- 1쪽 = 1조각. 쪽을 넘겨 붙이지 않고, 조각끼리 겹치지 않는다. PPTX는 슬라이드 1장 = 1쪽, 발표자 노트는 읽지 않는다.
-- 조각 최대 약 350토큰(bge-m3 토크나이저, 특수 토큰 제외). 넘으면 문단 → 문장 → 토큰 순으로 나눈다.
-- 10토큰 미만인 쪽은 조각을 만들지 않고 개수만 기록한다.
+규칙 (백엔드 합의안, 2026-11-24)
+- 1쪽 = 1조각 단위. 쪽을 넘겨 붙이지 않는다. PPTX는 슬라이드 1장 = 1쪽, 발표자 노트는 읽지 않는다.
+- 조각 최대 400토큰(bge-reranker-v2-m3 토크나이저, 특수 토큰 제외). 넘으면 문단 → 문장 → 토큰 순으로 나눈다.
+- 한 쪽을 여러 조각으로 나눌 때만 이웃 조각이 약 50토큰 겹친다: 앞 조각의 마지막 약 50토큰을 다음 조각 앞에 붙인다
+  (토큰 위치에서 자르되 단어 중간이면 다음 단어 처음부터). 겹친 부분을 포함해도 400토큰 이하. 쪽 사이에는 겹치지 않는다.
+- 내용이 적은 쪽은 조각을 만들지 않고(다음 쪽에 붙이지도 않음) 개수만 기록한다:
+  정리한 글이 20자 미만이거나 내용어가 3개 미만인 쪽.
+  내용어 = Kiwi(kiwipiepy) 명사(NNG · NNP) 개수 + 라틴 문자 단어(정규식 [A-Za-z][A-Za-z0-9]+) 개수.
+  (Kiwi SL 태그 대신 정규식을 쓴다: 한 글자 변수(x, n)는 세지 않고, 영어 교안에서 결과가 Kiwi 버전에 덜 흔들린다.)
 - 제3자 저작물 표시(© ... All rights reserved, "excluded from our Creative Commons license")가 있는 문단은 뺀다.
 - 필드: lecture_id, source_key, page_no, chunk_index, text (+ 확인용 course_id, split, token_count, source_file)
   source_key = <lecture_id>_D<쪽>_<쪽 안 번호>  (회의안건 B4 임시안)
@@ -11,12 +16,13 @@
 
 입력:  data/raw/mit_ocw/<강좌 폴더>/<zip>  (강좌 "Download Course" zip, 압축을 풀지 않고 읽는다)
        data/interim/mit_ocw/lectures.jsonl  (lecture_id · split 확인용)
-출력:  data/interim/mit_ocw/slides/<course_id>.jsonl, data/interim/mit_ocw/slides/stats.json
+출력:  data/interim/mit_ocw/slides-v2/<course_id>.jsonl, data/interim/mit_ocw/slides-v2/stats.json
+       (이전 규칙 결과 slides/는 그대로 둔다)
 
 사용:
-    uv run python scripts/data/ocw_slide_chunks.py                       # 학습 · 검증 강좌 전부
+    uv run python scripts/data/ocw_slide_chunks.py                       # 학습 · 검증 · 시험 강좌 전부
     uv run python scripts/data/ocw_slide_chunks.py --lectures 6.006_S20_L07 6.006_S20_L13
-    uv run python scripts/data/ocw_slide_chunks.py --tokenizer <bge-m3 폴더 또는 tokenizer.json>
+    uv run python scripts/data/ocw_slide_chunks.py --tokenizer <토크나이저 폴더 또는 tokenizer.json>
 """
 
 import argparse
@@ -29,9 +35,11 @@ from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree
 
-MAX_TOKENS = 350
-MIN_PAGE_TOKENS = 10
-TOKENIZER = "BAAI/bge-m3"
+MAX_TOKENS = 400
+OVERLAP_TOKENS = 50
+MIN_CHARS = 20
+MIN_CONTENT_WORDS = 3
+TOKENIZER = "BAAI/bge-reranker-v2-m3"
 
 # 강좌 zip 안 파일 이름 → (lecture 번호, 문서 표시). 강의(L) 교안만 쓴다(레시테이션 · 문제 풀이 노트 제외).
 COURSE_DIRS = {
@@ -39,12 +47,15 @@ COURSE_DIRS = {
     "6.034_F10": "6-034-artificial-intelligence-fall-2010",
     "6.046J_S15": "6-046j-design-and-analysis-of-algorithms-spring-2015",
     "6.0001_F16": "6-0001-introduction-to-computer-science-and-programming-in-python-fall-2016",
+    "6.172_F18": "6-172-performance-engineering-of-software-systems-fall-2018",
 }
 DOC_PATTERNS: dict[str, list[tuple[re.Pattern, str]]] = {
     "6.006_S20": [(re.compile(r"mit6_006s20_lec(\d+)\.pdf$", re.I), "D")],
-    # writtenlecN(필기 노트)은 스캔 이미지라 글자가 거의 없어 쓰지 않는다(쪽 대부분이 10토큰 미만).
+    # writtenlecN(필기 노트)은 스캔 이미지라 글자가 거의 없어 쓰지 않는다(쪽 대부분이 내용 적은 쪽).
     "6.046J_S15": [(re.compile(r"MIT6_046JS15_lec(\d+)\.pdf$", re.I), "D")],
     "6.0001_F16": [(re.compile(r"MIT6_0001F16_Lec(\d+)\.pdf$", re.I), "D")],
+    # 시험 강좌. lecN만(rec · hw · quiz · project · leiserchess · 유튜브 ID 이름의 자막 PDF 제외).
+    "6.172_F18": [(re.compile(r"MIT6_172F18_lec(\d+)\.pdf$", re.I), "D")],
 }
 # 6.034는 강의별 슬라이드가 없고 주제별 노트만 있어 강의에 직접 붙인다.
 FIXED_DOCS = {
@@ -73,8 +84,12 @@ JUNK_RE = re.compile(r"[\ue000-\uf8ff\x00-\x08\x0b-\x1f]")
 WS_RE = re.compile("[ \t\u00a0]+")
 
 
+LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")
+KIWI_NOUN_TAGS = ("NNG", "NNP")
+
+
 class TokenCounter:
-    """bge-m3 토크나이저로 토큰 수를 세고, 긴 문장을 토큰 단위로 자른다."""
+    """토크나이저(기본 bge-reranker-v2-m3)로 토큰 수를 세고, 긴 문장을 토큰 단위로 자르고, 끝 토큰을 떼어 낸다."""
 
     def __init__(self, name_or_path: str = TOKENIZER):
         from tokenizers import Tokenizer
@@ -93,6 +108,50 @@ class TokenCounter:
             text[offsets[i][0] : offsets[min(i + max_tokens, len(offsets)) - 1][1]].strip()
             for i in range(0, len(offsets), max_tokens)
         ]
+
+    def tail(self, text: str, n: int) -> str:
+        """text의 마지막 약 n토큰. 자른 곳이 단어 중간이면 다음 단어 처음부터(그래서 n보다 조금 적을 수 있다)."""
+        offsets = self.tok.encode(text, add_special_tokens=False).offsets
+        if n <= 0 or not offsets:
+            return ""
+        if n >= len(offsets):
+            return text.strip()
+        start = offsets[len(offsets) - n][0]
+        if start > 0 and not text[start - 1].isspace():
+            m = re.search(r"\s", text[start:])
+            if not m:
+                return ""
+            start += m.end()
+        return text[start:].strip()
+
+
+def content_word_count(text: str) -> int:
+    """내용어 수 = Kiwi 명사(NNG · NNP) + 라틴 문자 단어([A-Za-z][A-Za-z0-9]+)."""
+    nouns = sum(t.tag in KIWI_NOUN_TAGS for t in _kiwi().tokenize(text)) if re.search(r"[가-힣]", text) else 0
+    return nouns + len(LATIN_WORD_RE.findall(text))
+
+
+_KIWI = None
+
+
+def _kiwi():
+    global _KIWI
+    if _KIWI is None:
+        from kiwipiepy import Kiwi
+
+        _KIWI = Kiwi()
+    return _KIWI
+
+
+def is_low_content(
+    text: str,
+    content_words: Callable[[str], int] = content_word_count,
+    min_chars: int = MIN_CHARS,
+    min_content_words: int = MIN_CONTENT_WORDS,
+) -> bool:
+    """글이 min_chars자 미만이거나 내용어가 min_content_words개 미만이면 True. 글자 수는 공백을 하나로 줄여 센다."""
+    flat = re.sub(r"\s+", " ", text).strip()
+    return len(flat) < min_chars or content_words(flat) < min_content_words
 
 
 def clean_block(text: str) -> str:
@@ -136,23 +195,49 @@ def chunk_page(
     count: Callable[[str], int],
     split_tokens: Callable[[str, int], list[str]],
     max_tokens: int = MAX_TOKENS,
+    overlap_tokens: int = 0,
+    tail: Callable[[str, int], str] | None = None,
 ) -> list[str]:
-    """한 쪽을 조각으로. 쪽 전체가 max_tokens 이하면 1조각, 넘으면 문단 → 문장 → 토큰 순으로 나눈다."""
+    """한 쪽을 조각으로. 쪽 전체가 max_tokens 이하면 1조각, 넘으면 문단 → 문장 → 토큰 순으로 나눈다.
+
+    나눌 때는 (max_tokens - overlap_tokens) 안으로 나눈 뒤, 둘째 조각부터 앞 조각의 끝 약 overlap_tokens를 앞에 붙인다.
+    붙인 결과가 max_tokens를 넘으면(토큰 경계가 합쳐지며 늘어난 경우) 겹침을 줄인다.
+    """
     whole = "\n".join(paragraphs)
     if count(whole) <= max_tokens:
         return [whole] if whole else []
+    if overlap_tokens and tail is None:
+        raise ValueError("overlap_tokens를 쓰려면 tail 함수가 필요함")
+    if not 0 <= overlap_tokens < max_tokens // 2:
+        raise ValueError(f"overlap_tokens {overlap_tokens}는 max_tokens {max_tokens}의 절반보다 작아야 함")
+    budget = max_tokens - overlap_tokens
     pieces = []
-    for para in pack(paragraphs, count, max_tokens, "\n"):
-        if count(para) <= max_tokens:
+    for para in pack(paragraphs, count, budget, "\n"):
+        if count(para) <= budget:
             pieces.append(para)
             continue
         sentences = [s for line in para.split("\n") for s in SENTENCE_END_RE.split(line) if s]
-        for sent_group in pack(sentences, count, max_tokens, " "):
-            if count(sent_group) <= max_tokens:
+        for sent_group in pack(sentences, count, budget, " "):
+            if count(sent_group) <= budget:
                 pieces.append(sent_group)
             else:
-                pieces.extend(split_tokens(sent_group, max_tokens))
-    return [p for p in pieces if p.strip()]
+                pieces.extend(split_tokens(sent_group, budget))
+    pieces = [p for p in pieces if p.strip()]
+    if not overlap_tokens:
+        return pieces
+    out = pieces[:1]
+    for prev, cur in zip(pieces, pieces[1:], strict=False):
+        n = overlap_tokens
+        while n > 0:
+            head = tail(prev, n)
+            joined = f"{head} {cur}" if head else cur
+            if count(joined) <= max_tokens:
+                break
+            n -= 5
+        else:
+            joined = cur
+        out.append(joined)
+    return out
 
 
 def read_pdf_pages(data: bytes) -> list[list[str]]:
@@ -213,17 +298,23 @@ def chunk_document(
     count: Callable[[str], int],
     split_tokens: Callable[[str, int], list[str]],
     max_tokens: int = MAX_TOKENS,
-    min_page_tokens: int = MIN_PAGE_TOKENS,
+    overlap_tokens: int = 0,
+    tail: Callable[[str, int], str] | None = None,
+    content_words: Callable[[str], int] = content_word_count,
+    min_chars: int = MIN_CHARS,
+    min_content_words: int = MIN_CONTENT_WORDS,
 ) -> tuple[list[dict], dict]:
-    rows, stats = [], {"pages": len(pages), "short_pages": 0, "third_party_blocks": 0, "split_pages": 0}
+    """page_count는 모든 쪽, chunk_count는 만든 조각 수(내용 적은 쪽 제외), excluded_low_content는 뺀 쪽 수."""
+    rows = []
+    stats = {"page_count": len(pages), "excluded_low_content": 0, "third_party_blocks": 0, "split_pages": 0}
     for page_no, blocks in enumerate(pages, start=1):
         paras, removed = page_paragraphs(blocks)
         stats["third_party_blocks"] += removed
         text = "\n".join(paras)
-        if count(text) < min_page_tokens:
-            stats["short_pages"] += 1
+        if is_low_content(text, content_words, min_chars, min_content_words):
+            stats["excluded_low_content"] += 1
             continue
-        pieces = chunk_page(paras, count, split_tokens, max_tokens)
+        pieces = chunk_page(paras, count, split_tokens, max_tokens, overlap_tokens, tail)
         if len(pieces) > 1:
             stats["split_pages"] += 1
         for part, piece in enumerate(pieces, start=1):
@@ -237,7 +328,8 @@ def chunk_document(
                     "token_count": count(piece),
                 }
             )
-    stats["chunks"] = len(rows)
+    stats["chunk_count"] = len(rows)
+    stats["max_chunk_tokens"] = max((r["token_count"] for r in rows), default=0)
     return rows, stats
 
 
@@ -246,11 +338,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--raw", type=Path, default=Path("data/raw/mit_ocw"))
     ap.add_argument("--lectures-meta", type=Path, default=Path("data/interim/mit_ocw/lectures.jsonl"))
-    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides"))
+    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides-v2"))
     ap.add_argument("--courses", nargs="*", default=list(COURSE_DIRS))
     ap.add_argument("--lectures", nargs="*", default=None, help="이 lecture_id만 (기본: 교안이 있는 강의 전부)")
     ap.add_argument("--tokenizer", default=TOKENIZER)
     ap.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
+    ap.add_argument("--overlap-tokens", type=int, default=OVERLAP_TOKENS)
+    ap.add_argument("--min-chars", type=int, default=MIN_CHARS)
+    ap.add_argument("--min-content-words", type=int, default=MIN_CONTENT_WORDS)
     args = ap.parse_args()
 
     tc = TokenCounter(args.tokenizer)
@@ -262,7 +357,14 @@ def main() -> None:
                 meta[r["lecture_id"]] = r
     args.out.mkdir(parents=True, exist_ok=True)
     all_stats = {
-        "rules": {"max_tokens": args.max_tokens, "min_page_tokens": MIN_PAGE_TOKENS, "tokenizer": args.tokenizer},
+        "rules": {
+            "tokenizer": args.tokenizer,
+            "max_tokens": args.max_tokens,
+            "overlap_tokens": args.overlap_tokens,
+            "min_chars": args.min_chars,
+            "min_content_words": args.min_content_words,
+            "content_words": "Kiwi NNG+NNP + Latin [A-Za-z][A-Za-z0-9]+",
+        },
         "documents": [],
         "unmatched_lectures": [],
     }
@@ -282,14 +384,18 @@ def main() -> None:
                     continue
                 data = z.read(name)
                 pages = read_pptx_pages(data) if name.lower().endswith(".pptx") else read_pdf_pages(data)
-                doc_rows, st = chunk_document(pages, lecture_id, tag, tc.count, tc.split, args.max_tokens)
+                doc_rows, st = chunk_document(
+                    pages, lecture_id, tag, tc.count, tc.split, args.max_tokens, args.overlap_tokens, tc.tail,
+                    min_chars=args.min_chars, min_content_words=args.min_content_words,
+                )
                 for r in doc_rows:
                     r.update(course_id=course_id, split=meta[lecture_id]["split"], source_file=name.rsplit("/", 1)[-1])
                 rows.extend(doc_rows)
                 all_stats["documents"].append({"lecture_id": lecture_id, "tag": tag, "file": name, **st})
                 print(
-                    f"{lecture_id} {tag}: {st['pages']}쪽 → {st['chunks']}조각 "
-                    f"(짧은 쪽 {st['short_pages']}, 나눈 쪽 {st['split_pages']}, 제3자 표시 {st['third_party_blocks']})"
+                    f"{lecture_id} {tag}: {st['page_count']}쪽 → {st['chunk_count']}조각 "
+                    f"(내용 적은 쪽 {st['excluded_low_content']}, 나눈 쪽 {st['split_pages']}, "
+                    f"제3자 표시 {st['third_party_blocks']}, 최대 {st['max_chunk_tokens']}토큰)"
                 )
         if rows:
             with open(args.out / f"{course_id}.jsonl", "w", encoding="utf-8", newline="\n") as fh:
