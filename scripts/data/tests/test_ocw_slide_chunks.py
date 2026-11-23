@@ -147,10 +147,17 @@ def test_normal_text_and_code_kept():
         "for (int i = 0; i < n; ++i) {",
         "Example: !\"#$%",
         "P P P",
+        "L = ['a','b','c']",
+        "s[::]",
+        "s[::-1]",
+        "'A'",
+        "'A+'",
+        "s[::] evaluates to \"abcdefgh\", same as s[0:len(s):1]",
     ]:
         assert not is_garbled(line), line
     assert is_garbled("!\"##$* %&'&(")
-    assert is_garbled("'(%!74 :;%0.4:;+04 B<)4")
+    assert is_garbled("%&'&(! \"#)*+)$#)*+,*-./01*")
+    assert is_garbled("'0=&>=80=&>?&!\"#$%&!")
 
 
 def test_find_docs_maps_lectures_and_dedupes():

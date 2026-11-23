@@ -11,16 +11,17 @@
   (Kiwi SL 태그 대신 정규식을 쓴다: 한 글자 변수(x, n)는 세지 않고, 영어 교안에서 결과가 Kiwi 버전에 덜 흔들린다.)
 - 제3자 저작물 표시(© ... All rights reserved, "excluded from our Creative Commons license")가 있는 문단은 뺀다.
 - 6.172 저작권 줄(© 2008–2018 by the MIT 6.172 Lecturers 등)은 지운다. (2026-11-24 추가)
-- 깨진 글 줄을 뺀다(6.172 일부 글꼴이 !"#$%& 같은 기호로 뽑힘). 글상자 안의 줄마다, 괄호 · = 를 뺀 글자 중
-  글자 · 숫자 비율이 0.5 미만이거나 단어처럼 보이는 토큰이 절반 미만이면 깨진 줄로 본다. 내용 적은 쪽 판정 전에 한다.
+- 깨진 글 줄을 뺀다(6.172 일부 글꼴이 !"#$%& 같은 기호로 뽑힘). 글상자 안의 줄마다,
+  괄호 · = · 따옴표 · 쉼표 · 콜론을 뺀 글자 중 글자 · 숫자 비율이 0.5 미만이거나
+  단어처럼 보이는 토큰이 절반 미만이면 깨진 줄로 본다. 내용 적은 쪽 판정 전에 한다.
 - 필드: lecture_id, source_key, page_no, chunk_index, text (+ 확인용 course_id, split, token_count, source_file)
   source_key = <lecture_id>_D<쪽>_<쪽 안 번호>  (회의안건 B4 임시안)
   chunk_index = 문서 안에서 1부터 매긴 순서
 
 입력:  data/raw/mit_ocw/<강좌 폴더>/<zip>  (강좌 "Download Course" zip, 압축을 풀지 않고 읽는다)
        data/interim/mit_ocw/lectures.jsonl  (lecture_id · split 확인용)
-출력:  data/interim/mit_ocw/slides-v3/<course_id>.jsonl, data/interim/mit_ocw/slides-v3/stats.json
-       (이전 결과 slides/ · slides-v2/는 그대로 둔다)
+출력:  data/interim/mit_ocw/slides-v4/<course_id>.jsonl, data/interim/mit_ocw/slides-v4/stats.json
+       (이전 결과 slides/ · slides-v2/ · slides-v3/는 그대로 둔다)
 
 사용:
     uv run python scripts/data/ocw_slide_chunks.py                       # 학습 · 검증 · 시험 강좌 전부
@@ -91,7 +92,7 @@ COPYRIGHT_RE = re.compile(
 # 깨진 글 판정(6.172 PDF 일부 글꼴은 글자 대응표가 없어 !"#$%& 같은 기호로 뽑힌다). 줄마다 본다.
 MIN_WORD_CHAR_RATIO = 0.5
 MIN_WORDLIKE_TOKEN_RATIO = 0.5
-CODE_BRACKETS = set("()[]{}=")
+CODE_BRACKETS = set("()[]{}='\",:")  # 비율을 셀 때 빼는 글자: 괄호 · = · 따옴표 · 쉼표 · 콜론(코드 줄 보존)
 SENTENCE_END_RE = re.compile(r"(?<=[.?!])\s+(?=\S)")
 # PDF 글머리표 글꼴(사용자 정의 영역) · 제어 문자
 JUNK_RE = re.compile(r"[\ue000-\uf8ff\x00-\x08\x0b-\x1f]")
@@ -176,7 +177,7 @@ def clean_block(text: str) -> str:
 
 
 def _word_share(s: str) -> float:
-    """괄호 · = 를 뺀 공백 아닌 글자 중 글자 · 숫자(str.isalnum: 라틴 · 한글 · 그리스 문자 등) 비율."""
+    """CODE_BRACKETS를 뺀 공백 아닌 글자 중 글자 · 숫자(str.isalnum: 라틴 · 한글 · 그리스 문자 등) 비율."""
     chars = [c for c in s if not c.isspace() and c not in CODE_BRACKETS]
     return sum(c.isalnum() for c in chars) / len(chars) if chars else 1.0
 
@@ -188,7 +189,7 @@ def is_garbled(
 ) -> bool:
     """깨진 글 줄이면 True.
 
-    - 글자 · 숫자 비율(괄호 · = 제외)이 min_word_char_ratio 미만이거나
+    - 글자 · 숫자 비율(괄호 · = · 따옴표 · 쉼표 · 콜론 제외)이 min_word_char_ratio 미만이거나
     - 단어처럼 보이는 토큰(글자 · 숫자 비율 0.5 이상)이 min_wordlike_token_ratio 미만.
       글자 · 숫자가 없는 2글자 이하 토큰(=, +, ==, {, })은 연산자로 보고 세지 않는다.
     코드 · 수식 줄(x = a[i], L[i] = L[i] + 1, O(n log n))은 통과한다.
@@ -407,7 +408,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--raw", type=Path, default=Path("data/raw/mit_ocw"))
     ap.add_argument("--lectures-meta", type=Path, default=Path("data/interim/mit_ocw/lectures.jsonl"))
-    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides-v3"))
+    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides-v4"))
     ap.add_argument("--courses", nargs="*", default=list(COURSE_DIRS))
     ap.add_argument("--lectures", nargs="*", default=None, help="이 lecture_id만 (기본: 교안이 있는 강의 전부)")
     ap.add_argument("--tokenizer", default=TOKENIZER)
@@ -438,6 +439,7 @@ def main() -> None:
             "min_word_char_ratio": args.min_word_char_ratio,
             "min_wordlike_token_ratio": args.min_wordlike_token_ratio,
             "garbled_unit": "line in PDF text block",
+            "garbled_ignored_chars": "".join(sorted(CODE_BRACKETS)),
             "copyright_removed": "6.172 (c) YYYY-YYYY by the MIT 6.172 Lecturers",
         },
         "documents": [],
