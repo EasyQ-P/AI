@@ -1,6 +1,6 @@
 """평가용 교안 조각 파일(es-vN 초안)을 만든다 (설계서 6.1.6 평가용 강의 판정, 7.4.2 등록).
 
-ocw_slide_chunks.py 결과(slides-v2)에서 평가 강좌(검증 6.0001, 시험 6.172)의 조각만 골라
+ocw_slide_chunks.py 결과(slides-v3)에서 평가 강좌(검증 6.0001, 시험 6.172)의 조각만 골라
 eval_reference_chunks.jsonl(lecture_id, source_key, page_no, chunk_index, text)과 meta.json을 만든다.
 meta.json에는 청킹 규칙(stats.json의 rules)과 백엔드 합의 일치 판정 기준을 적는다.
 
@@ -41,7 +41,7 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--name", required=True)
-    ap.add_argument("--slides", type=Path, default=Path("data/interim/mit_ocw/slides-v2"))
+    ap.add_argument("--slides", type=Path, default=Path("data/interim/mit_ocw/slides-v3"))
     ap.add_argument("--out-root", type=Path, default=Path("data/processed"))
     ap.add_argument("--courses", nargs="*", default=EVAL_COURSES)
     args = ap.parse_args()
@@ -75,6 +75,8 @@ def main() -> None:
         "min_chars": rules["min_chars"],
         "min_content_words": rules["min_content_words"],
         "content_words": rules.get("content_words"),
+        "min_word_char_ratio": rules.get("min_word_char_ratio"),
+        "min_wordlike_token_ratio": rules.get("min_wordlike_token_ratio"),
         "match_criteria": MATCH_CRITERIA,
         "counts": {
             "chunks": len(chunks),

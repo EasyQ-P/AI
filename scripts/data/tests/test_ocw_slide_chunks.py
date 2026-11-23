@@ -6,6 +6,7 @@ from ocw_slide_chunks import (
     chunk_document,
     chunk_page,
     find_docs,
+    is_garbled,
     is_low_content,
     page_paragraphs,
     read_pptx_pages,
@@ -104,7 +105,7 @@ def test_kiwi_content_words_if_installed():
 
 
 def test_third_party_and_boilerplate_removed():
-    kept, removed = page_paragraphs(
+    kept, removed, _ = page_paragraphs(
         [
             "Real content here",
             "© Someone. All rights reserved. This content is excluded from our Creative Commons license.",
@@ -114,6 +115,42 @@ def test_third_party_and_boilerplate_removed():
     )
     assert kept == ["Real content here"]
     assert removed == 1
+
+
+def test_copyright_line_removed_inside_block():
+    blocks = ["WHY PERFORMANCE\nENGINEERING?\n© 2008–2018 by the MIT 6.172 Lecturers",
+              "Intro\n(c) 2012-2018 by the Lecturers of MIT 6.172",
+              "Stack memory. 2008-2018 by the © 2008 MIT 6.172 Lecturers 2018"]
+    kept, _, garbled = page_paragraphs(blocks)
+    assert kept == ["WHY PERFORMANCE ENGINEERING?", "Intro", "Stack memory."] and garbled == 0
+
+
+def test_garbled_lines_dropped_and_counted():
+    block = "!\"##$*\n%&'&(! \"#)*+)$#)*+,*-./01*\nCache Coherence\n! ! ! # $ $"
+    kept, _, garbled = page_paragraphs([block])
+    assert kept == ["Cache Coherence"] and garbled == 3
+    rows, st = chunk_document([[block], ["!\"##$* %&'&("]], "C_L01", "D", count, split_tokens, 50,
+                              content_words=words, min_chars=1, min_content_words=1)
+    assert [r["page_no"] for r in rows] == [1]
+    assert st["garbled_blocks"] == 4 and st["excluded_low_content"] == 1
+
+
+def test_normal_text_and_code_kept():
+    for line in [
+        "Dynamic programming stores answers to subproblems.",
+        "동적 계획법은 부분 문제의 답을 저장한다.",
+        "x = a[i]",
+        "L[i] = L[i] + 1",
+        "def sqrt(x, eps):",
+        "O(n log n) vs Θ(n²)",
+        "for i in range(n):",
+        "for (int i = 0; i < n; ++i) {",
+        "Example: !\"#$%",
+        "P P P",
+    ]:
+        assert not is_garbled(line), line
+    assert is_garbled("!\"##$* %&'&(")
+    assert is_garbled("'(%!74 :;%0.4:;+04 B<)4")
 
 
 def test_find_docs_maps_lectures_and_dedupes():

@@ -10,14 +10,17 @@
   내용어 = Kiwi(kiwipiepy) 명사(NNG · NNP) 개수 + 라틴 문자 단어(정규식 [A-Za-z][A-Za-z0-9]+) 개수.
   (Kiwi SL 태그 대신 정규식을 쓴다: 한 글자 변수(x, n)는 세지 않고, 영어 교안에서 결과가 Kiwi 버전에 덜 흔들린다.)
 - 제3자 저작물 표시(© ... All rights reserved, "excluded from our Creative Commons license")가 있는 문단은 뺀다.
+- 6.172 저작권 줄(© 2008–2018 by the MIT 6.172 Lecturers 등)은 지운다. (2026-11-24 추가)
+- 깨진 글 줄을 뺀다(6.172 일부 글꼴이 !"#$%& 같은 기호로 뽑힘). 글상자 안의 줄마다, 괄호 · = 를 뺀 글자 중
+  글자 · 숫자 비율이 0.5 미만이거나 단어처럼 보이는 토큰이 절반 미만이면 깨진 줄로 본다. 내용 적은 쪽 판정 전에 한다.
 - 필드: lecture_id, source_key, page_no, chunk_index, text (+ 확인용 course_id, split, token_count, source_file)
   source_key = <lecture_id>_D<쪽>_<쪽 안 번호>  (회의안건 B4 임시안)
   chunk_index = 문서 안에서 1부터 매긴 순서
 
 입력:  data/raw/mit_ocw/<강좌 폴더>/<zip>  (강좌 "Download Course" zip, 압축을 풀지 않고 읽는다)
        data/interim/mit_ocw/lectures.jsonl  (lecture_id · split 확인용)
-출력:  data/interim/mit_ocw/slides-v2/<course_id>.jsonl, data/interim/mit_ocw/slides-v2/stats.json
-       (이전 규칙 결과 slides/는 그대로 둔다)
+출력:  data/interim/mit_ocw/slides-v3/<course_id>.jsonl, data/interim/mit_ocw/slides-v3/stats.json
+       (이전 결과 slides/ · slides-v2/는 그대로 둔다)
 
 사용:
     uv run python scripts/data/ocw_slide_chunks.py                       # 학습 · 검증 · 시험 강좌 전부
@@ -78,6 +81,17 @@ BOILERPLATE_RE = re.compile(
     r"For information about citing these materials or our Terms of Use.*|https?://ocw\.mit\.edu.*)$",
     re.I | re.S,
 )
+# 6.172 교안 모든 쪽의 저작권 줄. 다른 글과 한 글상자에 섞여 나오므로 문단 단위가 아니라 글 안에서 지운다.
+COPYRIGHT_RE = re.compile(
+    # ©가 빠지거나 연도가 앞뒤로 흩어져 뽑히는 경우도 있다("2008-2018 by the © 2008 MIT 6.172 Lecturers 2018").
+    r"(?:(?:©|\(c\))\s*)?(?:\d{4}(?:\s*[–—-]\s*\d{4})?\s*)?(?:by\s+the\s+)?(?:©\s*\d{4}\s*)?"
+    r"(?:MIT\s+6\.172\s+Lecturers|Lecturers\s+of\s+MIT\s+6\.172)(?:\s+\d{4}(?:\s+\d{4})?\b)?",
+    re.I,
+)
+# 깨진 글 판정(6.172 PDF 일부 글꼴은 글자 대응표가 없어 !"#$%& 같은 기호로 뽑힌다). 줄마다 본다.
+MIN_WORD_CHAR_RATIO = 0.5
+MIN_WORDLIKE_TOKEN_RATIO = 0.5
+CODE_BRACKETS = set("()[]{}=")
 SENTENCE_END_RE = re.compile(r"(?<=[.?!])\s+(?=\S)")
 # PDF 글머리표 글꼴(사용자 정의 영역) · 제어 문자
 JUNK_RE = re.compile(r"[\ue000-\uf8ff\x00-\x08\x0b-\x1f]")
@@ -161,10 +175,61 @@ def clean_block(text: str) -> str:
     return " ".join(ln for ln in lines if ln)
 
 
-def page_paragraphs(blocks: list[str]) -> tuple[list[str], int]:
-    """쪽의 문단 목록에서 제3자 저작물 표시 문단과 안내문을 뺀다. (남은 문단, 뺀 제3자 표시 문단 수)"""
-    kept, removed = [], 0
+def _word_share(s: str) -> float:
+    """괄호 · = 를 뺀 공백 아닌 글자 중 글자 · 숫자(str.isalnum: 라틴 · 한글 · 그리스 문자 등) 비율."""
+    chars = [c for c in s if not c.isspace() and c not in CODE_BRACKETS]
+    return sum(c.isalnum() for c in chars) / len(chars) if chars else 1.0
+
+
+def is_garbled(
+    line: str,
+    min_word_char_ratio: float = MIN_WORD_CHAR_RATIO,
+    min_wordlike_token_ratio: float = MIN_WORDLIKE_TOKEN_RATIO,
+) -> bool:
+    """깨진 글 줄이면 True.
+
+    - 글자 · 숫자 비율(괄호 · = 제외)이 min_word_char_ratio 미만이거나
+    - 단어처럼 보이는 토큰(글자 · 숫자 비율 0.5 이상)이 min_wordlike_token_ratio 미만.
+      글자 · 숫자가 없는 2글자 이하 토큰(=, +, ==, {, })은 연산자로 보고 세지 않는다.
+    코드 · 수식 줄(x = a[i], L[i] = L[i] + 1, O(n log n))은 통과한다.
+    """
+    if not line.strip():
+        return False
+    if _word_share(line) < min_word_char_ratio:
+        return True
+    toks = [t for t in line.split() if any(c.isalnum() for c in t) or len(t) > 2]
+    if not toks:
+        return False
+    wordlike = sum(_word_share(t) >= 0.5 for t in toks)
+    return wordlike / len(toks) < min_wordlike_token_ratio
+
+
+def strip_garbled(
+    block: str,
+    min_word_char_ratio: float = MIN_WORD_CHAR_RATIO,
+    min_wordlike_token_ratio: float = MIN_WORDLIKE_TOKEN_RATIO,
+) -> tuple[str, int]:
+    """글상자에서 저작권 줄을 지우고 깨진 줄을 뺀다. (남은 글, 뺀 깨진 줄 수)"""
+    lines = COPYRIGHT_RE.sub(" ", block).splitlines()
+    kept = [ln for ln in lines if not is_garbled(ln, min_word_char_ratio, min_wordlike_token_ratio)]
+    dropped = sum(1 for ln in lines if ln.strip()) - sum(1 for ln in kept if ln.strip())
+    return "\n".join(kept), dropped
+
+
+def page_paragraphs(
+    blocks: list[str],
+    min_word_char_ratio: float = MIN_WORD_CHAR_RATIO,
+    min_wordlike_token_ratio: float = MIN_WORDLIKE_TOKEN_RATIO,
+) -> tuple[list[str], int, int]:
+    """쪽의 문단 목록에서 저작권 줄 · 깨진 줄 · 제3자 저작물 표시 문단 · 안내문을 뺀다.
+
+    반환: (남은 문단, 뺀 제3자 표시 문단 수, 뺀 깨진 줄 수). 깨진 글은 PDF 글상자 안의 줄 단위로 뺀다
+    (한 글상자에 깨진 줄과 제목이 섞여 나오기 때문).
+    """
+    kept, removed, garbled = [], 0, 0
     for b in blocks:
+        b, g = strip_garbled(b, min_word_char_ratio, min_wordlike_token_ratio)
+        garbled += g
         b = clean_block(b)
         if not b or BOILERPLATE_RE.match(b):
             continue
@@ -172,7 +237,7 @@ def page_paragraphs(blocks: list[str]) -> tuple[list[str], int]:
             removed += 1
             continue
         kept.append(b)
-    return kept, removed
+    return kept, removed, garbled
 
 
 def pack(units: list[str], count: Callable[[str], int], max_tokens: int, sep: str) -> list[str]:
@@ -303,12 +368,16 @@ def chunk_document(
     content_words: Callable[[str], int] = content_word_count,
     min_chars: int = MIN_CHARS,
     min_content_words: int = MIN_CONTENT_WORDS,
+    min_word_char_ratio: float = MIN_WORD_CHAR_RATIO,
+    min_wordlike_token_ratio: float = MIN_WORDLIKE_TOKEN_RATIO,
 ) -> tuple[list[dict], dict]:
     """page_count는 모든 쪽, chunk_count는 만든 조각 수(내용 적은 쪽 제외), excluded_low_content는 뺀 쪽 수."""
     rows = []
-    stats = {"page_count": len(pages), "excluded_low_content": 0, "third_party_blocks": 0, "split_pages": 0}
+    stats = {"page_count": len(pages), "excluded_low_content": 0, "garbled_blocks": 0,
+             "third_party_blocks": 0, "split_pages": 0}
     for page_no, blocks in enumerate(pages, start=1):
-        paras, removed = page_paragraphs(blocks)
+        paras, removed, garbled = page_paragraphs(blocks, min_word_char_ratio, min_wordlike_token_ratio)
+        stats["garbled_blocks"] += garbled
         stats["third_party_blocks"] += removed
         text = "\n".join(paras)
         if is_low_content(text, content_words, min_chars, min_content_words):
@@ -338,7 +407,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--raw", type=Path, default=Path("data/raw/mit_ocw"))
     ap.add_argument("--lectures-meta", type=Path, default=Path("data/interim/mit_ocw/lectures.jsonl"))
-    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides-v2"))
+    ap.add_argument("--out", type=Path, default=Path("data/interim/mit_ocw/slides-v3"))
     ap.add_argument("--courses", nargs="*", default=list(COURSE_DIRS))
     ap.add_argument("--lectures", nargs="*", default=None, help="이 lecture_id만 (기본: 교안이 있는 강의 전부)")
     ap.add_argument("--tokenizer", default=TOKENIZER)
@@ -346,6 +415,8 @@ def main() -> None:
     ap.add_argument("--overlap-tokens", type=int, default=OVERLAP_TOKENS)
     ap.add_argument("--min-chars", type=int, default=MIN_CHARS)
     ap.add_argument("--min-content-words", type=int, default=MIN_CONTENT_WORDS)
+    ap.add_argument("--min-word-char-ratio", type=float, default=MIN_WORD_CHAR_RATIO)
+    ap.add_argument("--min-wordlike-token-ratio", type=float, default=MIN_WORDLIKE_TOKEN_RATIO)
     args = ap.parse_args()
 
     tc = TokenCounter(args.tokenizer)
@@ -364,6 +435,10 @@ def main() -> None:
             "min_chars": args.min_chars,
             "min_content_words": args.min_content_words,
             "content_words": "Kiwi NNG+NNP + Latin [A-Za-z][A-Za-z0-9]+",
+            "min_word_char_ratio": args.min_word_char_ratio,
+            "min_wordlike_token_ratio": args.min_wordlike_token_ratio,
+            "garbled_unit": "line in PDF text block",
+            "copyright_removed": "6.172 (c) YYYY-YYYY by the MIT 6.172 Lecturers",
         },
         "documents": [],
         "unmatched_lectures": [],
@@ -387,6 +462,8 @@ def main() -> None:
                 doc_rows, st = chunk_document(
                     pages, lecture_id, tag, tc.count, tc.split, args.max_tokens, args.overlap_tokens, tc.tail,
                     min_chars=args.min_chars, min_content_words=args.min_content_words,
+                    min_word_char_ratio=args.min_word_char_ratio,
+                    min_wordlike_token_ratio=args.min_wordlike_token_ratio,
                 )
                 for r in doc_rows:
                     r.update(course_id=course_id, split=meta[lecture_id]["split"], source_file=name.rsplit("/", 1)[-1])
@@ -395,7 +472,8 @@ def main() -> None:
                 print(
                     f"{lecture_id} {tag}: {st['page_count']}쪽 → {st['chunk_count']}조각 "
                     f"(내용 적은 쪽 {st['excluded_low_content']}, 나눈 쪽 {st['split_pages']}, "
-                    f"제3자 표시 {st['third_party_blocks']}, 최대 {st['max_chunk_tokens']}토큰)"
+                    f"깨진 줄 {st['garbled_blocks']}, 제3자 표시 {st['third_party_blocks']}, "
+                    f"최대 {st['max_chunk_tokens']}토큰)"
                 )
         if rows:
             with open(args.out / f"{course_id}.jsonl", "w", encoding="utf-8", newline="\n") as fh:
