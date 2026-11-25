@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pytest
 from build_splits import TRAIN_FIELDS, build, trim
 
@@ -19,6 +21,19 @@ def test_trim_counts_and_deterministic():
     assert sum(p["label"] == "OPINION" for p in a) == 4
     with pytest.raises(ValueError):
         trim(pairs, {"ANSWERABLE": 11}, seed=1)
+
+
+def test_trim_by_evidence_type():
+    pairs = [pair(f"{t}{lab}{i}", lab, evidence_type=t)
+             for t in ("TRANSCRIPT", "DOCUMENT") for lab in ("ANSWERABLE", "OPINION") for i in range(10)]
+    counts = {"TRANSCRIPT": {"ANSWERABLE": 6, "OPINION": 5}, "DOCUMENT": {"ANSWERABLE": 3, "OPINION": 2}}
+    got = trim(pairs, counts, seed=1)
+    assert [p["pair_id"] for p in got] == [p["pair_id"] for p in trim(pairs, counts, seed=1)]
+    c = Counter((p["evidence_type"], p["label"]) for p in got)
+    assert c == Counter({("TRANSCRIPT", "ANSWERABLE"): 6, ("TRANSCRIPT", "OPINION"): 5,
+                         ("DOCUMENT", "ANSWERABLE"): 3, ("DOCUMENT", "OPINION"): 2})
+    with pytest.raises(ValueError):
+        trim(pairs, {"DOCUMENT": {"ANSWERABLE": 11}}, seed=1)
 
 
 def test_build_train_fields_and_eval_rows():

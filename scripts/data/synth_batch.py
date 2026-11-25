@@ -4,9 +4,15 @@ LLM 호출은 이 스크립트 밖에서 한다(Sonnet). 이 스크립트는
   prepare: 청크를 골라 배치 입력(input.jsonl)과 메타(meta.json)를 만들고
   ingest:  LLM 출력(output.jsonl)을 검사해 3.3.3 필드의 학습 쌍(pairs.jsonl)으로 바꾼다.
 
+두 가지 근거를 다룬다(--source).
+  transcript(기본): 발화 청크 → 한국어 구어체 변환(ko_rewrite) → 질문. 근거는 한국어 변환본, TRANSCRIPT.
+  slides: 교안 조각(slides-v4, 400토큰 · 겹침 50) → 질문. 근거는 번역 없이 영어 원문, DOCUMENT · page_no.
+          evidence_id는 교안 조각의 source_key. 2026-11-25 B안(OCW 700/700/600 안에서 교안 쌍으로 일부 교체).
+
 배치 폴더: data/interim/synth/<batch_id>/  (커밋 금지)
-  input.jsonl   evidence_id, lecture_id, course_id, evidence_text(영어 원문)
-  output.jsonl  LLM 출력: evidence_id, ko_text, content, skip,
+  input.jsonl   evidence_id, lecture_id, course_id, evidence_text(영어 원문), target_types
+                (slides는 evidence_type DOCUMENT, page_no도)
+  output.jsonl  LLM 출력: evidence_id, ko_text(transcript만), content, skip,
                 questions[gen_method, question_text, question_type, answer_hint]
   pairs.jsonl   학습 쌍(3.3.3)
   meta.json     모델 ID, 날짜, 프롬프트 버전, 원본 청크 ID, 제외 개수
@@ -17,6 +23,9 @@ LLM 호출은 이 스크립트 밖에서 한다(Sonnet). 이 스크립트는
     # 고른 강의의 청크 전부(회의안건 B3), 50청크씩 묶음 파일(parts/in_NN.jsonl)도 만든다
     uv run python scripts/data/synth_batch.py prepare --batch train-ocw-v3_1 \
         --lectures 6.006_S20_L07 6.006_S20_L13 --question-prompt question_synth_v3_1 --part-size 50
+    # 교안 조각: 학습 강좌 3개에서 seed로 n개(질문 합성 프롬프트 기본값 question_synth_slides_v1)
+    uv run python scripts/data/synth_batch.py prepare --source slides --batch train-slides-v1 \
+        --courses 6.006_S20 6.034_F10 6.046J_S15 --n 200 --balance-courses --part-size 50
 """
 
 import argparse
@@ -29,6 +38,9 @@ from pathlib import Path
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 DEFAULT_PROMPTS = {"rewrite": "ko_rewrite_v1", "questions": "question_synth_v3_1"}
+DEFAULT_SLIDE_PROMPT = "question_synth_slides_v1"
+# 질문 15~35자 검사를 하지 않는 옛 프롬프트(그 뒤 프롬프트는 모두 검사)
+LOOSE_LEN_PROMPTS = {"question_synth_v1"}
 SPLIT_OF = {"6.006_S20": "TRAIN", "6.046J_S15": "TRAIN", "6.034_F10": "TRAIN", "6.0001_F16": "VALIDATION"}
 
 LABEL_OF = {"ANSWERABLE": "ANSWERABLE", "OUT_OF_SCOPE": "INSUFFICIENT_EVIDENCE", "OPINION": "OPINION"}
@@ -76,6 +88,28 @@ def select_chunks(chunks: list[dict], n: int, seed: int, exclude_lectures: set[s
     return sorted(picked, key=lambda c: c["evidence_id"])
 
 
+def balanced_select(chunks: list[dict], n: int, seed: int, exclude_lectures: set[str]) -> list[dict]:
+    """강좌마다 되도록 같은 수를 뽑는다. 조각이 모자란 강좌는 전부 쓰고 남은 몫을 다른 강좌에 넘긴다.
+
+    적은 강좌부터 남은 개수 ÷ 남은 강좌 수만큼 배정한다(같은 입력이면 같은 결과).
+    """
+    by_course: dict[str, list[dict]] = {}
+    for c in chunks:
+        by_course.setdefault(c["course_id"], []).append(c)
+    pools = {
+        course: [c for c in cs if c["lecture_id"].rsplit("_", 1)[-1].startswith("L")
+                 and c["lecture_id"] not in exclude_lectures]
+        for course, cs in by_course.items()
+    }
+    order = sorted(pools, key=lambda k: (len(pools[k]), k))
+    picked, remaining = [], n
+    for i, course in enumerate(order):
+        take = min(remaining // (len(order) - i), len(pools[course]))
+        picked += select_chunks(pools[course], take, seed, exclude_lectures)
+        remaining -= take
+    return sorted(picked, key=lambda c: c["evidence_id"])
+
+
 def lecture_chunks(chunks_dir: Path, lectures: list[str]) -> list[dict]:
     """고른 강의의 청크 전부(회의안건 B3: 강의 단위로 고르고 고른 강의는 전부 변환). 강좌가 여럿이어도 된다."""
     want = set(lectures)
@@ -84,6 +118,32 @@ def lecture_chunks(chunks_dir: Path, lectures: list[str]) -> list[dict]:
     if missing := want - {c["lecture_id"] for c in picked}:
         sys.exit(f"청크가 없는 강의: {sorted(missing)}")
     return sorted(picked, key=lambda c: c["evidence_id"])
+
+
+def slide_rows(rows: list[dict]) -> list[dict]:
+    """slides-v4 교안 조각 행 → 배치 입력 형식(evidence_id = source_key, DOCUMENT, page_no)."""
+    return [
+        {
+            "evidence_id": r["source_key"],
+            "lecture_id": r["lecture_id"],
+            "course_id": r["lecture_id"].rsplit("_", 1)[0],
+            "evidence_type": "DOCUMENT",
+            "page_no": r["page_no"],
+            "evidence_text": r["text"],
+        }
+        for r in rows
+    ]
+
+
+def slide_chunks(slides_dir: Path, courses: list[str], lectures: list[str] | None) -> list[dict]:
+    """강좌들의 교안 조각. lectures를 주면 그 강의만, 없으면 강좌 전체."""
+    rows = [r for course in courses for r in read_jsonl(slides_dir / f"{course}.jsonl")]
+    if lectures:
+        want = set(lectures)
+        rows = [r for r in rows if r["lecture_id"] in want]
+        if missing := want - {r["lecture_id"] for r in rows}:
+            sys.exit(f"교안 조각이 없는 강의: {sorted(missing)}")
+    return slide_rows(rows)
 
 
 def has_logistics(text: str) -> bool:
@@ -134,14 +194,16 @@ def overlap_warnings(pairs: list[dict]) -> dict:
     답변 가능 질문이 청크 말을 너무 많이 쓰거나(ANS_MAX_OVERLAP 초과),
     근거 부족 질문이 청크 말을 거의 안 쓰면(OOS_MIN_OVERLAP 미만) 겹침만으로 라벨이 드러난다.
     """
+    # 영어 교안 근거는 한국어 질문과 단어 단위로 겹칠 수 없어(영어 용어만 겹침) 이 확인선을 쓰지 않는다.
+    ko = [p for p in pairs if p.get("evidence_lang", "ko") == "ko"]
     too_high = [
         p["pair_id"]
-        for p in pairs
+        for p in ko
         if p["gen_method"] == "ANSWERABLE" and overlap(p["question_text"], p["evidence_text"]) > ANS_MAX_OVERLAP
     ]
     too_low = [
         p["pair_id"]
-        for p in pairs
+        for p in ko
         if p["gen_method"] == "OUT_OF_SCOPE" and overlap(p["question_text"], p["evidence_text"]) < OOS_MIN_OVERLAP
     ]
     return {
@@ -175,12 +237,12 @@ def english_term_ratio(text: str) -> float:
     return sum(bool(ALPHA_RE.search(w)) for w in words) / len(words) if words else 0.0
 
 
-def validate_output(row: dict, strict_len: bool = False) -> list[str]:
-    """LLM 출력 1행의 형식 오류 목록. 비어 있으면 통과."""
+def validate_output(row: dict, strict_len: bool = False, need_ko_text: bool = True) -> list[str]:
+    """LLM 출력 1행의 형식 오류 목록. 비어 있으면 통과. 교안(slides)은 ko_text가 없다(need_ko_text=False)."""
     errs = []
     if not row.get("evidence_id"):
         errs.append("evidence_id 없음")
-    if not HANGUL_RE.search(row.get("ko_text", "")):
+    if need_ko_text and not HANGUL_RE.search(row.get("ko_text", "")):
         errs.append("ko_text가 한국어가 아님")
     if row.get("skip"):
         return errs
@@ -202,7 +264,8 @@ def validate_output(row: dict, strict_len: bool = False) -> list[str]:
 
 
 def to_pairs(row: dict, src: dict, batch_id: str) -> list[dict]:
-    """검증을 통과한 LLM 출력 1행 → 3.3.3 학습 쌍."""
+    """검증을 통과한 LLM 출력 1행 → 3.3.3 학습 쌍. 교안(DOCUMENT)은 영어 원문을 근거로 쓴다."""
+    doc = src.get("evidence_type") == "DOCUMENT"
     pairs = []
     for i, q in enumerate(row.get("questions") or [], start=1):
         label = LABEL_OF[q["gen_method"]]
@@ -212,10 +275,10 @@ def to_pairs(row: dict, src: dict, batch_id: str) -> list[dict]:
                 "course_id": src["course_id"],
                 "lecture_id": src["lecture_id"],
                 "question_text": q["question_text"],
-                "evidence_text": row["ko_text"],
-                "evidence_type": "TRANSCRIPT",
+                "evidence_text": src["evidence_text"] if doc else row["ko_text"],
+                "evidence_type": "DOCUMENT" if doc else "TRANSCRIPT",
                 "evidence_id": row["evidence_id"],
-                "page_no": None,
+                "page_no": src.get("page_no") if doc else None,
                 "start_ms": None,
                 "end_ms": None,
                 "label": label,
@@ -229,7 +292,7 @@ def to_pairs(row: dict, src: dict, batch_id: str) -> list[dict]:
                 "split": SPLIT_OF[src["course_id"]],
                 "dataset_version": None,
                 "question_lang": "ko",
-                "evidence_lang": "ko",
+                "evidence_lang": "en" if doc else "ko",
                 "question_type": q["question_type"],
                 "has_english_term": english_term_ratio(q["question_text"]) > 0,
                 "answer_hint": q.get("answer_hint", ""),
@@ -238,24 +301,62 @@ def to_pairs(row: dict, src: dict, batch_id: str) -> list[dict]:
     return pairs
 
 
+SLIDE_TASK = """# 묶음 작업 지시 ({batch}, 교안 조각)
+입력 파일 parts/in_NN.jsonl(묶음이 없으면 input.jsonl)의 각 줄(영어 교안 조각 하나)마다 출력 한 줄을 만들어
+parts/out_NN.jsonl(또는 output.jsonl)에 쓴다(입력과 같은 순서, 줄 수 같게).
+
+각 조각에 대해:
+1. 번역하지 않는다. ko_text를 만들지 않는다(근거는 영어 원문 그대로 학습에 들어간다).
+2. {prompt}.md 규칙대로 evidence_text만 보고 질문 3개(ANSWERABLE, OUT_OF_SCOPE, OPINION)를 만든다.
+   target_types는 참고용. 말투 섞기의 줄 번호 i는 그 파일 안에서 0부터 센다.
+3. 출력 한 줄(JSON, ensure_ascii=False). questions의 각 항목은
+   gen_method, question_text, question_type, type_changed, answer_hint를 가진다(OPINION의 answer_hint는 ""):
+{{"evidence_id": "...", "content": true, "skip": false, "questions": [
+ {{"gen_method": "ANSWERABLE", "question_text": "...", "question_type": "...", ...}},
+ {{"gen_method": "OUT_OF_SCOPE", "question_text": "...", "question_type": "...", ...}},
+ {{"gen_method": "OPINION", "question_text": "...", "question_type": "의견", ...}}]}}
+ 강의 내용이 없는 조각(제목 · 목차 · 소개 · 참고문헌 · 저작권 문구뿐)은 "content": false, "skip": true, "questions": [].
+
+규칙: 질문은 15~35자(공백 포함). question_type은 개념·방법·이유·비교·예시·운영·의견 중 하나.
+스크립트나 다른 모델 호출로 생성하지 말고 직접 작성한다. 파일 쓰기는 Python json.dumps(ensure_ascii=False).
+끝나면 줄 수와 JSON 파싱을 확인하고, 15~35자 밖 질문이 있으면 고친다.
+"""
+
+
 def cmd_prepare(args) -> None:
-    courses = sorted({lid.rsplit("_", 1)[0] for lid in args.lectures}) if args.lectures else [args.course]
-    if not courses or None in courses:
-        sys.exit("--course 또는 --lectures가 필요합니다.")
+    slides = args.source == "slides"
+    if args.lectures:
+        courses = sorted({lid.rsplit("_", 1)[0] for lid in args.lectures})
+    elif slides:
+        courses = sorted(args.courses or ([args.course] if args.course else []))
+    else:
+        courses = [args.course] if args.course else []
+    if not courses:
+        sys.exit("--lectures 또는 --course(교안은 --courses도 가능)가 필요합니다.")
     for course in courses:
         if course not in SPLIT_OF:
-            sys.exit(f"{course}는 한국어 변환 대상이 아닙니다(시험 강좌는 영어 원문 그대로, 설계서 3.2.2).")
-    if args.lectures:
+            sys.exit(f"{course}는 학습 · 검증 강좌가 아닙니다(시험 강좌는 합성하지 않음, 설계서 3.3.4).")
+    if slides:
+        pool = slide_chunks(args.slides, courses, args.lectures)
+        if args.lectures:
+            picked = pool
+        elif args.balance_courses:
+            picked = balanced_select(pool, args.n, args.seed, set(args.exclude))
+        else:
+            picked = select_chunks(pool, args.n, args.seed, set(args.exclude))
+    elif args.lectures:
         picked = lecture_chunks(args.chunks, args.lectures)
     else:
         picked = select_chunks(read_jsonl(args.chunks / f"{args.course}.jsonl"), args.n, args.seed, set(args.exclude))
+    question_prompt = args.question_prompt or (DEFAULT_SLIDE_PROMPT if slides else DEFAULT_PROMPTS["questions"])
     out = args.root / args.batch
     out.mkdir(parents=True, exist_ok=True)
     targets = assign_target_types([c["evidence_text"] for c in picked], args.seed)
-    rows = [
-        {**{k: c[k] for k in ("evidence_id", "lecture_id", "course_id", "evidence_text")}, "target_types": t}
-        for c, t in zip(picked, targets, strict=True)
-    ]
+    keys = ("evidence_id", "lecture_id", "course_id", "evidence_type", "page_no", "evidence_text") if slides else (
+        "evidence_id", "lecture_id", "course_id", "evidence_text")
+    rows = [{**{k: c[k] for k in keys}, "target_types": t} for c, t in zip(picked, targets, strict=True)]
+    if slides:
+        (out / "TASK.md").write_text(SLIDE_TASK.format(batch=args.batch, prompt=question_prompt), encoding="utf-8")
     write_jsonl(out / "input.jsonl", rows)
     if args.part_size:
         # 구독 한도 창마다 나눠 돌리기 위한 묶음 파일. LLM은 parts/in_NN.jsonl → parts/out_NN.jsonl을 만든다.
@@ -265,35 +366,38 @@ def cmd_prepare(args) -> None:
     meta = {
         "batch_id": args.batch,
         "created": dt.date.today().isoformat(),
+        "source": args.source,
+        "slides_dir": str(args.slides) if slides else None,
         "course_id": courses[0] if len(courses) == 1 else courses,
         "lectures": sorted(args.lectures) if args.lectures else None,
         "part_size": args.part_size or None,
         "seed": args.seed,
+        "balance_courses": bool(slides and args.balance_courses and not args.lectures),
+        "by_course": {k: sum(c["course_id"] == k for c in picked) for k in courses},
         "excluded_lectures": sorted(args.exclude),
-        "prompts": {"rewrite": args.rewrite_prompt, "questions": args.question_prompt},
+        "prompts": {"rewrite": None if slides else args.rewrite_prompt, "questions": question_prompt},
         "source_evidence_ids": [c["evidence_id"] for c in picked],
         "model": None,
     }
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"{len(picked)}개 청크 → {out / 'input.jsonl'}")
-
-
-def meta_prompts(batch_dir: Path) -> dict:
-    return json.loads((batch_dir / "meta.json").read_text(encoding="utf-8")).get("prompts", {})
+    kind = "교안 조각" if slides else "청크"
+    print(f"{len(picked)}개 {kind} → {out / 'input.jsonl'} (질문 프롬프트 {question_prompt})")
 
 
 def cmd_ingest(args) -> None:
     out = args.root / args.batch
     src = {r["evidence_id"]: r for r in read_jsonl(out / "input.jsonl")}
     rows = read_jsonl(out / "output.jsonl")
+    batch_meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    strict = batch_meta.get("prompts", {}).get("questions") not in LOOSE_LEN_PROMPTS
+    need_ko = batch_meta.get("source", "transcript") != "slides"
     errors, pairs, skipped, no_content = {}, [], [], []
     for row in rows:
         eid = row.get("evidence_id")
         if eid not in src:
             errors[str(eid)] = ["입력에 없는 evidence_id"]
             continue
-        strict = meta_prompts(out).get("questions", "") >= "question_synth_v2"
-        if errs := validate_output(row, strict_len=strict):
+        if errs := validate_output(row, strict_len=strict, need_ko_text=need_ko):
             errors[eid] = errs
             continue
         if row.get("content") is False:
@@ -304,7 +408,7 @@ def cmd_ingest(args) -> None:
         pairs.extend(to_pairs(row, src[eid], args.batch))
     missing = sorted(set(src) - {r.get("evidence_id") for r in rows})
     write_jsonl(out / "pairs.jsonl", pairs)
-    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    meta = batch_meta
     meta.update(
         {
             "model": args.model,
@@ -333,7 +437,13 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare")
     p.add_argument("--batch", required=True)
+    p.add_argument("--source", choices=["transcript", "slides"], default="transcript",
+                   help="transcript = 발화 청크(한국어 변환), slides = 교안 조각(영어 원문, DOCUMENT)")
     p.add_argument("--course", help="강좌에서 --n개를 무작위로 고를 때")
+    p.add_argument("--courses", nargs="*", default=None, help="slides: 여러 강좌를 합쳐 --n개를 무작위로 고를 때")
+    p.add_argument("--slides", type=Path, default=Path("data/interim/mit_ocw/slides-v4"))
+    p.add_argument("--balance-courses", action="store_true",
+                   help="slides --courses: 강좌마다 되도록 같은 수(모자란 강좌는 전부, 남는 몫은 다른 강좌로)")
     p.add_argument("--lectures", nargs="*", default=None, help="이 강의들의 청크 전부(강좌 여럿 가능)")
     p.add_argument("--part-size", type=int, default=0, help="이 크기로 parts/in_NN.jsonl 묶음도 만든다")
     p.add_argument("--n", type=int, default=30)
@@ -341,7 +451,8 @@ def main() -> None:
     p.add_argument("--chunks", type=Path, default=Path("data/interim/mit_ocw/chunks"))
     p.add_argument("--exclude", nargs="*", default=[], help="뺄 lecture_id (예: 예비 샘플에 쓴 강의)")
     p.add_argument("--rewrite-prompt", default=DEFAULT_PROMPTS["rewrite"])
-    p.add_argument("--question-prompt", default=DEFAULT_PROMPTS["questions"])
+    p.add_argument("--question-prompt", default=None,
+                   help=f"기본값: transcript {DEFAULT_PROMPTS['questions']}, slides {DEFAULT_SLIDE_PROMPT}")
     i = sub.add_parser("ingest")
     i.add_argument("--batch", required=True)
     i.add_argument("--model", required=True, help="실제로 생성한 모델 ID")

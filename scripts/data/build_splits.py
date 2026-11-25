@@ -2,6 +2,9 @@
 
 - train.jsonl: OCW 합성 쌍 + SQuAD 쌍을 3.3.3 학습 필드만 남겨 합친다.
   --ocw-counts를 주면 OCW를 라벨별 개수(예: 700/700/600)로 seed 추출한다. 강좌 비율은 섞어서 자연히 따른다.
+  B안(2026-11-25): --ocw에 발화 쌍 · 교안 쌍 파일을 함께 주고 --ocw-counts를 근거 종류별로 준다.
+    예: '{"TRANSCRIPT":{"ANSWERABLE":550,"INSUFFICIENT_EVIDENCE":550,"OPINION":450},
+          "DOCUMENT":{"ANSWERABLE":150,"INSUFFICIENT_EVIDENCE":150,"OPINION":150}}'
   AI Hub 500은 --aihub(aihub_sample.py 결과)로 넣는다. AI Hub가 들어간 결과물도 AI Hub 데이터로 다룬다(3.1.3).
   --aihub 외 입력에 AI Hub 행이 있거나 검증셋에 AI Hub · SQuAD 행이 있으면 멈춘다.
 - validation.jsonl: 검증 쌍(val-480)을 3.3.3 평가 필드의 질문 단위 행으로 바꾼다.
@@ -46,15 +49,23 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def trim(pairs: list[dict], counts: dict[str, int], seed: int) -> list[dict]:
-    """라벨별 counts개를 seed로 뽑는다. 원래 순서를 유지한다."""
+def trim(pairs: list[dict], counts: dict, seed: int) -> list[dict]:
+    """라벨별 counts개를 seed로 뽑는다. 원래 순서를 유지한다.
+
+    counts는 {라벨: 개수} 또는 근거 종류별 {"TRANSCRIPT": {라벨: 개수}, "DOCUMENT": {라벨: 개수}} (B안, 2026-11-25).
+    {라벨: 개수}는 예전과 같은 결과를 낸다(ds-draft-1 재현).
+    """
     rng = random.Random(seed)
+    nested = all(isinstance(v, dict) for v in counts.values())
+    groups = counts.items() if nested else [(None, counts)]
     keep = set()
-    for lab, n in counts.items():
-        ids = sorted(p["pair_id"] for p in pairs if p["label"] == lab)
-        if len(ids) < n:
-            raise ValueError(f"{lab}: {len(ids)}개뿐인데 {n}개를 뽑으려 함")
-        keep.update(rng.sample(ids, n))
+    for etype, by_label in groups:
+        for lab, n in by_label.items():
+            ids = sorted(p["pair_id"] for p in pairs
+                         if p["label"] == lab and (etype is None or p["evidence_type"] == etype))
+            if len(ids) < n:
+                raise ValueError(f"{etype or ''} {lab}: {len(ids)}개뿐인데 {n}개를 뽑으려 함".strip())
+            keep.update(rng.sample(ids, n))
     return [p for p in pairs if p["pair_id"] in keep]
 
 
@@ -123,6 +134,8 @@ def build(
             "rows": len(train),
             "by_label": dict(Counter(r["label"] for r in train)),
             "by_source": dict(Counter(r["source"] for r in train)),
+            "by_evidence_type_label": {f"{t}/{lab}": n for (t, lab), n in
+                                       sorted(Counter((r["evidence_type"], r["label"]) for r in train).items())},
             "by_course": dict(Counter(str(r["course_id"]) for r in train)),
         },
         "validation": {
@@ -139,7 +152,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--name", required=True)
     ap.add_argument("--out-root", type=Path, default=Path("data/processed"))
-    ap.add_argument("--ocw", type=Path, required=True)
+    ap.add_argument("--ocw", type=Path, nargs="+", required=True,
+                    help="OCW 합성 쌍 파일(발화 · 교안 여러 개 가능)")
     ap.add_argument("--squad", type=Path, required=True)
     ap.add_argument("--val", type=Path, required=True)
     ap.add_argument("--aihub", type=Path, default=None, help="aihub_sample.py의 pairs.jsonl (학과 서버에서만)")
@@ -148,8 +162,8 @@ def main() -> None:
     args = ap.parse_args()
 
     train, validation, meta = build(
-        read_jsonl(args.ocw), read_jsonl(args.squad), read_jsonl(args.val), args.ocw_counts, args.seed,
-        read_jsonl(args.aihub) if args.aihub else None,
+        [p for f in args.ocw for p in read_jsonl(f)], read_jsonl(args.squad), read_jsonl(args.val),
+        args.ocw_counts, args.seed, read_jsonl(args.aihub) if args.aihub else None,
     )
     out = args.out_root / args.name
     out.mkdir(parents=True, exist_ok=True)
@@ -158,7 +172,7 @@ def main() -> None:
     meta = {
         "name": args.name,
         "created": dt.date.today().isoformat(),
-        "inputs": {"ocw": str(args.ocw), "squad": str(args.squad), "val": str(args.val),
+        "inputs": {"ocw": [str(f) for f in args.ocw],"squad": str(args.squad), "val": str(args.val),
                    "aihub": str(args.aihub) if args.aihub else None},
         "ocw_counts": args.ocw_counts,
         "seed": args.seed,
