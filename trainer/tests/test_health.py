@@ -12,7 +12,8 @@ def test_health_requires_api_key():
     assert r.json()["result_code"] == 612
 
 
-def test_health_ok_with_key():
+def test_health_ok_with_key(api):
+    client, _ = api
     r = client.get("/api/v1/health", headers={"X-API-Key": get_settings().trainer_api_key})
     assert r.status_code == 200
     body = r.json()

@@ -45,7 +45,11 @@
     - **엄윤종에게 제안:** `ocw_slide_chunks.py`가 `retrieval.chunking`(`page_paragraphs` · `chunk_slides_with_stats` · OCW 패턴)을 불러 쓰면 규칙이 한 곳에만 있게 된다(PDF · zip 읽기만 스크립트에 남김)
   - A-2. ~~다르면 검증 후보 · 어려운 오답 다시 만들기~~ → 필요 없음(위)
   - A-3. 검증 480 검수(2인 교차) — **지금 시작 가능**(후보가 slides-v4 기준이라 바뀌지 않음) (최의찬 + 엄윤종)
-- [ ] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`, 바로 시작 가능)
+- [~] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`)
+  - [x] 3a(11/26): Codex 구현 → Claude 리뷰 · 수정(DB 쓰는 핸들러를 `async def` → `def`로, 이벤트 루프 막힘 방지). `app/core/timefmt.py`(`to_kst_iso`), 테스트 `trainer/tests/test_api_read.py`
+  - 시험 설정: `conftest.py`가 `DATA_ROOT`를 임시 폴더로 바꾸고 `api` fixture(임시 SQLite + 마이그레이션)를 둔다. API 시험은 이 fixture를 쓴다(실제 레지스트리를 건드리지 않게)
+  - Codex 실행 메모: Codex는 git 기록을 쓸 수 없다 → Claude가 `dev`에서 worktree(`.claude/worktrees/<이름>`)를 만들고 Codex는 파일만 고친다. 커밋은 Claude가 리뷰 후
+  - [ ] 3b 데이터셋 등록(7.4.2)
 - [ ] 4. 학과 서버 1차 올리기: `docs/work/server-setup.md`(`pip --target`, API 실행, SSH 터널 확인) (최의찬 + Claude, 바로 시작 가능)
 - [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 강연 중 적재 · 해제, 800 ms 측정 (Claude, 4 · 관리자 · 팀 답변 후)
   - 5-1. LLM_ONLY 판정 프롬프트 `llm-only-v1` 확정: 서비스 대체 판정과 베이스라인 ③이 같은 프롬프트(τ_LLM). 원본 위치 제안 `retrieval` 패키지 (Claude + 팀)
