@@ -35,11 +35,14 @@
   - 실패하면 종류별 장애 코드(수집 602 · 학습 606 · 평가 607 · 변환 604)로 `modules.fault.record_fault`(reg_faults + `logs/fault-날짜.jsonl`)
   - `DEFAULT_HANDLERS`는 비어 있다 → 지금 제출하면 600. 단계 6에서 학습 · 평가 · 변환 모듈을 여기에 넣는다. 시험용 핸들러는 `app/jobs/sample.py`
   - 서버를 켜려면 먼저 `alembic upgrade head`(reg_jobs가 없으면 시작 때 실패)
-- [~] A. slides-v4 비교: 엄윤종 `scripts/data/ocw_slide_chunks.py`(`origin/feature/dataset`) ↔ `retrieval.chunk_slides` 조각 수 · 경계 (Claude, 브랜치 `feature/slides-v4-compare`, 3a · 4와 동시에)
+- [x] A. slides-v4 비교 · 맞춤: 엄윤종 `scripts/data/ocw_slide_chunks.py`(`origin/feature/dataset`) ↔ `retrieval.chunk_slides` 조각 수 · 경계 (Claude, 브랜치 `feature/slides-v4-compare`, 3a · 4와 동시에)
   - 결과(11/26, 코드 읽기 + slides-v4 결과 2377쪽 · 2634조각으로 측정, 원본 PDF · bge 토크나이저 없이):
     - **rc-v1 데이터는 다시 만들 필요 없음.** 검증 후보 · 어려운 오답은 `scripts/search/common.py`가 엄윤종 slides-v4 결과 파일(`search_pack/index/slides-v4/*.jsonl`)을 그대로 읽어 만들었다. `chunk_slides`는 쓰지 않았다.
     - **서비스 쪽 `retrieval.chunk_slides`가 slides-v4와 다르다**(학습 · 서비스 조각 불일치): ① 깨진 줄 판정에서 2글자 이하 기호 토큰(=, +, {)을 빼지 않아 slides-v4가 남긴 줄 92개(80쪽)를 더 지움 ② 긴 쪽(192쪽, 8%)을 문단 → 문장 → 토큰이 아니라 토큰 400개 창으로 자르고 겹침도 단어 경계를 안 봄 ③ 글상자 줄 잇기 · 줄 끝 하이픈 잇기 · 쪽 번호 · OCW 안내문 · 저작권 줄 · 제3자 표시 제거가 없음(지금은 "호출하는 쪽이 한다") ④ 최소 글자 수를 공백 정리 전에 셈
-    - 할 일: `chunk_slides`를 slides-v4 규칙에 맞춘다(입력을 쪽별 글상자 목록으로). 맞춘 뒤 bge 토크나이저로 slides-v4 결과와 조각이 같은지 확인. 그 뒤 엄윤종 스크립트가 `retrieval`을 불러 쓰도록 제안(규칙 한 곳)
+    - **맞춤(11/26):** `retrieval.chunk_slides`를 slides-v4 규칙 그대로 다시 씀. 쪽 = 글상자 목록(글자열이면 빈 줄로 나눔), `chunk_slides_with_stats`(slides-v4 stats와 같은 집계), MIT OCW 전용 `OCW_STRIP_PATTERNS`(6.172 저작권 줄) · `OCW_DROP_PATTERNS`(제3자 표시)는 선택, 겹침은 max의 절반 미만
+    - **확인:** 실제 bge 토크나이저로 엄윤종 함수와 나란히 돌림 → 2377쪽 2377쪽 같음, 이웃 3쪽을 합친 긴 쪽 794개(나눠진 것 235)도 모두 같음. 엄윤종 함수가 slides-v4 결과를 그대로 다시 만드는 것도 확인(2185/2185)
+    - **백엔드에 알릴 것:** 교안을 넣을 때 쪽마다 글상자 목록(pymupdf `get_text("blocks", sort=True)`의 글 블록, PPTX는 슬라이드 문단)으로 넘겨야 학습 데이터와 같은 조각이 나온다. 글자열로 넘기면 빈 줄 기준으로만 나뉜다. 서비스 교안에는 OCW 패턴을 넘기지 않는다
+    - **엄윤종에게 제안:** `ocw_slide_chunks.py`가 `retrieval.chunking`(`page_paragraphs` · `chunk_slides_with_stats` · OCW 패턴)을 불러 쓰면 규칙이 한 곳에만 있게 된다(PDF · zip 읽기만 스크립트에 남김)
   - A-2. ~~다르면 검증 후보 · 어려운 오답 다시 만들기~~ → 필요 없음(위)
   - A-3. 검증 480 검수(2인 교차) — **지금 시작 가능**(후보가 slides-v4 기준이라 바뀌지 않음) (최의찬 + 엄윤종)
 - [ ] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`, 바로 시작 가능)
@@ -52,7 +55,7 @@
 
 ```
 지금 동시에: A · 3a · 4
-A-3 검수 → 엄윤종 최종 데이터셋 ┐  (A chunk_slides 맞추기는 5 전까지)
+A-3 검수 → 엄윤종 최종 데이터셋 ┐  
 3a → 3b                                      ├→ 6 → 7
 4 → 5 (+ 5-1)                                ┘
 ```
