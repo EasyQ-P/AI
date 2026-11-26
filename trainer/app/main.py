@@ -12,13 +12,17 @@ from fastapi import FastAPI
 from app.api import router
 from app.core.config import check_settings, get_settings
 from app.core.errors import register_error_handlers
+from app.jobs import runner
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     check_settings(get_settings())
-    # TODO 작업 실행기(app.jobs.runner) 시작 · 종료
-    yield
+    runner.start()  # 남은 작업 정리 + 상태 파일 → reg_jobs 주기 동기화
+    try:
+        yield
+    finally:
+        runner.stop()  # 동기화만 멈춘다. 작업 프로세스는 그대로 돈다
 
 
 app = FastAPI(

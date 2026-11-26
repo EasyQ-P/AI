@@ -28,7 +28,13 @@
   - `trainer/app/db/models.py`(JSON은 PG에서만 JSONB, 상태는 CHECK, 시각은 UTC aware), 마이그레이션 `20261126_4d5f3a7aaa3d`(upgrade · check · downgrade 확인), 테스트 `trainer/tests/test_registry_db.py`
   - 기본 주소: `REGISTRY_DB_URL`이 비면 `{DATA_ROOT}/registry/registry.db`. SQLite는 접속마다 foreign_keys · WAL · busy_timeout
   - 주의: 테이블 간 relationship을 두지 않아 한 세션에서 부모 · 자식을 같이 넣을 때는 부모를 먼저 flush
-- [ ] 2. 작업 실행기: 202 + job_id, GPU 잠금(609), 중단, 재시작 후 정리, 자기 프로세스만 관리 (Claude)
+- [x] 2. 작업 실행기: 202 + job_id, GPU 잠금(609), 중단, 재시작 후 정리, 자기 프로세스만 관리 (Claude, 브랜치 `feature/job-runner`, #7 위에 쌓음)
+  - `app/jobs/runner.py` `JobRunner.submit/cancel/poll/start/stop`, 모듈 함수 `submit_job` · `cancel_job` · `start` · `stop`(main.py lifespan에서 시작 · 종료)
+  - 작업마다 자식 프로세스 `python -m app.jobs.worker <job_dir> <모듈:함수>`. 핸들러는 `JobContext`를 받아 `check_cancel()` · `report(...)`, 보류는 `raise JobHeld("below_target")`
+  - 파일: `{DATA_ROOT}/jobs/{job_id}/` payload.json · status.json · cancel · pid · worker.log. DB 반영은 API의 poll(기본 2초)만
+  - 실패하면 종류별 장애 코드(수집 602 · 학습 606 · 평가 607 · 변환 604)로 `modules.fault.record_fault`(reg_faults + `logs/fault-날짜.jsonl`)
+  - `DEFAULT_HANDLERS`는 비어 있다 → 지금 제출하면 600. 단계 6에서 학습 · 평가 · 변환 모듈을 여기에 넣는다. 시험용 핸들러는 `app/jobs/sample.py`
+  - 서버를 켜려면 먼저 `alembic upgrade head`(reg_jobs가 없으면 시작 때 실패)
 - [ ] 3. 기본 API: 7.4.1~4 · 7.4.24~25 (Codex)
 - [ ] 4. 학과 서버 1차 올리기: `pip --user`, API 실행, SSH 터널로 상태 확인 (최의찬 + Claude)
 - [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 적재 · 해제, 800 ms 측정 (Claude)
@@ -44,10 +50,10 @@
 ## 질문 (답이 필요한 것)
 - `reg_datasets.status` 값 목록이 설계서(8.2.38 · 7.4.3)에 없다. 지금은 제약 없이 문자열. 예: READY / ARCHIVED 중 무엇을 쓸지 정하면 CHECK 추가.
 - 팀 합의: 레지스트리 DB SQLite, 판정 모델 강연 중에만 적재(백엔드가 강연 시작 · 종료를 알려야 함). `docs/work/design-changes.md` 참고.
-- 서버 관리자: 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용, `/data/easyq` 사용 가능 여부.
+- 서버 관리자: 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용. (`/data` 없음 → `DATA_ROOT=/home/t26112/easyq-data`로 확정, design-changes 4번)
 
 ## 다음 할 일
-- Claude: 단계 1(레지스트리 DB) → 2(작업 실행기).
+- Claude: 단계 1 · 2 끝(PR #7, 다음 PR). 단계 3 Codex 작업 설명 작성 → 단계 4 서버 올리기.
 - Codex: 단계 3(기본 API), 단계 1 끝난 뒤.
 - 사람(최의찬): rc-v1 zip 엄윤종에게 전달, 검증 480 검수, 설계 변경 팀 공유, 관리자 문의, 서비스용 Gemini 키 · 결제 주체 결정.
 
