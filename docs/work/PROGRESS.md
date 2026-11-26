@@ -35,11 +35,36 @@
   - 실패하면 종류별 장애 코드(수집 602 · 학습 606 · 평가 607 · 변환 604)로 `modules.fault.record_fault`(reg_faults + `logs/fault-날짜.jsonl`)
   - `DEFAULT_HANDLERS`는 비어 있다 → 지금 제출하면 600. 단계 6에서 학습 · 평가 · 변환 모듈을 여기에 넣는다. 시험용 핸들러는 `app/jobs/sample.py`
   - 서버를 켜려면 먼저 `alembic upgrade head`(reg_jobs가 없으면 시작 때 실패)
-- [ ] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`)
-- [ ] 4. 학과 서버 1차 올리기: `pip --user`, API 실행, SSH 터널로 상태 확인 (최의찬 + Claude)
-- [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 적재 · 해제, 800 ms 측정 (Claude)
-- [ ] 6. 학습 한 바퀴: 학습 → 평가 → fp16 변환 → 등록 → 서빙 전환 · 롤백 (Claude, 테스트 Codex)
-- [ ] 7. 백엔드 연동: EC2 → SSH 터널 → 판정 호출, 시간 초과 대체 (최의찬 + 조현준 + Claude)
+- [~] A. slides-v4 비교: 엄윤종 `scripts/data/ocw_slide_chunks.py`(`origin/feature/dataset`) ↔ `retrieval.chunk_slides` 조각 수 · 경계 (Claude, 브랜치 `feature/slides-v4-compare`, 3a · 4와 동시에)
+  - 결과(11/26, 코드 읽기 + slides-v4 결과 2377쪽 · 2634조각으로 측정, 원본 PDF · bge 토크나이저 없이):
+    - **rc-v1 데이터는 다시 만들 필요 없음.** 검증 후보 · 어려운 오답은 `scripts/search/common.py`가 엄윤종 slides-v4 결과 파일(`search_pack/index/slides-v4/*.jsonl`)을 그대로 읽어 만들었다. `chunk_slides`는 쓰지 않았다.
+    - **서비스 쪽 `retrieval.chunk_slides`가 slides-v4와 다르다**(학습 · 서비스 조각 불일치): ① 깨진 줄 판정에서 2글자 이하 기호 토큰(=, +, {)을 빼지 않아 slides-v4가 남긴 줄 92개(80쪽)를 더 지움 ② 긴 쪽(192쪽, 8%)을 문단 → 문장 → 토큰이 아니라 토큰 400개 창으로 자르고 겹침도 단어 경계를 안 봄 ③ 글상자 줄 잇기 · 줄 끝 하이픈 잇기 · 쪽 번호 · OCW 안내문 · 저작권 줄 · 제3자 표시 제거가 없음(지금은 "호출하는 쪽이 한다") ④ 최소 글자 수를 공백 정리 전에 셈
+    - 할 일: `chunk_slides`를 slides-v4 규칙에 맞춘다(입력을 쪽별 글상자 목록으로). 맞춘 뒤 bge 토크나이저로 slides-v4 결과와 조각이 같은지 확인. 그 뒤 엄윤종 스크립트가 `retrieval`을 불러 쓰도록 제안(규칙 한 곳)
+  - A-2. ~~다르면 검증 후보 · 어려운 오답 다시 만들기~~ → 필요 없음(위)
+  - A-3. 검증 480 검수(2인 교차) — **지금 시작 가능**(후보가 slides-v4 기준이라 바뀌지 않음) (최의찬 + 엄윤종)
+- [ ] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`, 바로 시작 가능)
+- [ ] 4. 학과 서버 1차 올리기: `docs/work/server-setup.md`(`pip --target`, API 실행, SSH 터널 확인) (최의찬 + Claude, 바로 시작 가능)
+- [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 강연 중 적재 · 해제, 800 ms 측정 (Claude, 4 · 관리자 · 팀 답변 후)
+  - 5-1. LLM_ONLY 판정 프롬프트 `llm-only-v1` 확정: 서비스 대체 판정과 베이스라인 ③이 같은 프롬프트(τ_LLM). 원본 위치 제안 `retrieval` 패키지 (Claude + 팀)
+- [ ] 6. 학습 한 바퀴: 학습 → 평가 → fp16 변환 → 등록 → 서빙 전환 · 롤백 (Claude, 테스트 Codex) — **엄윤종 최종 데이터셋** · 3b · 5 · 5-1 필요
+- [ ] 7. 백엔드 연동: EC2 → SSH 터널 → 판정 호출, 시간 초과 대체 (최의찬 + 조현준 + Claude) — 6 · 조현준 합의 필요
+- 나중(Should, v1.0 이후): 교안 멀티모달 rc-v2 (아래 "나중에")
+
+```
+지금 동시에: A · 3a · 4
+A-3 검수 → 엄윤종 최종 데이터셋 ┐  (A chunk_slides 맞추기는 5 전까지)
+3a → 3b                                      ├→ 6 → 7
+4 → 5 (+ 5-1)                                ┘
+```
+
+### 엄윤종에게 받을 것
+| 받을 것 | 받아서 할 일 | 상태 |
+|---|---|---|
+| slides-v4 청킹 코드 | A 비교 | push됨(`origin/feature/dataset`, dev PR 없음 → PR 요청) |
+| es-vN 파일 형식 | 3b | `build_eval_slides.py` → `eval_reference_chunks.jsonl`(lecture_id · source_key · page_no · chunk_index · text) + `meta.json` |
+| 어려운 오답 · 재확인 라벨 | 학습셋 반영 | 대기 |
+| 최종 train · validation · test.jsonl | 서버 `/home/t26112/easyq-data/upload/<폴더>/`에 두면 7.4.2 등록 → 6 | **일정 확인 필요** |
+| 시험셋 자체 녹음 강의 | 시험셋 포함 | 대기 |
 
 ### 단계 3 작업 설명 (Codex)
 > 설계 원문: `docs/design/ch07_api.md` 7.4 머리말 표(공통 규칙) · 각 절, `ch06_process.md` 6.4.1 · 6.4.2, `ch03_data.md` 3.3.3(필드). 이 설명에 없는 설계 결정이 필요하면 구현하지 말고 "질문"에 적고 멈춘다.
@@ -71,7 +96,7 @@
 - `modules/dataset.validate_dataset(source_dir)`에 6.4.1 검사: 3.3.3 필드, 검증 · 시험 후보 ≤ 20 · 정답 근거가 후보 안, 강좌가 두 분할에 겹치지 않음, 검증 · 시험에 AI Hub 행 없음, 시험셋은 사람 라벨만. 어긋나면 601 + `errors`(파일 · 행 번호 · 사유, **행 내용은 넣지 않음**) + `record_fault(601, "dataset", None, 요약)`.
 - `source_dir`는 `{DATA_ROOT}/upload/` 아래만 받는다(`..`나 밖 경로는 601). 통과하면 `{DATA_ROOT}/datasets/ds-vN/`로 복사하고 reg_datasets에 등록. 검증 · 시험셋 내용이 이전 버전과 같으면 val/test 버전을 이어 쓰고, 다르면 새 번호(내용 해시로 비교).
 - `reg_datasets.status`는 값 목록이 아직 없다(질문 1번). **임시로 `READY`** 를 넣고 코드에 TODO를 남긴다.
-- 평가용 교안 조각(es-vN, reg_eval_slide_chunks) 저장은 파일 형식이 3장에 확정돼 있으면 하고, 아니면 멈추고 질문.
+- 평가용 교안 조각(es-vN, reg_eval_slide_chunks): 엄윤종 `scripts/data/build_eval_slides.py`가 만드는 `eval_reference_chunks.jsonl`(lecture_id · source_key · page_no · chunk_index · text)을 `source_dir`에서 읽어 저장한다. 파일이 이 형식과 다르면 멈추고 질문.
 - 테스트 데이터는 테스트 안에서 만든 가짜 JSONL만 쓴다. `data/` 아래 실제 파일 · AI Hub 파일은 열지 않는다.
 
 **끝 기준**: `uv run ruff check .` · `uv run pytest` 통과, Python 3.9 문법, `test_routes.py`의 28개 경로 그대로, PROGRESS 단계 3에 체크와 메모.
