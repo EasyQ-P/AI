@@ -40,7 +40,9 @@
 - [~] 6. 리뷰 · 통합 · 실제 데이터로 실행 · PR (Claude)
   - 리뷰 끝: meta 파일 이름 분리(`validation_meta.json` · `hard_negatives_meta.json`), 오답 행 `label_source=HARD_NEGATIVE`, pytest `pythonpath=["."]`
   - fake 임베더 실행(11/26): 검증 480 × 후보 20, 오답 2100(700 × 3, 발화 1668 · 교안 432), 정답 근거 후보 포함률 92.6%
-  - 남은 것: Gemini 키로 실제 실행, push · PR
+  - Gemini 실행(11/26, 결제 연결, `data/interim/search/rc-v1/`): 검증 480 × 후보 20, synth 근거 포함률 전체 98.8% · 상위 10 96.7% · 상위 5 90.8%. 오답 2100(700 × 3, 발화 1719 · 교안 381), 정답 근거 후보 포함률 97.7%
+  - Gemini 수정: 텍스트마다 Content로 보내기(목록을 넘기면 벡터 1개만 옴), 한도 초과 시 서버가 준 시간 대기, 캐시 100개마다 저장
+  - 남은 것: 결과를 엄윤종에게 전달(학과 서버 · 공유 경로 정하기), PR
 - [ ] 7. 엄윤종 slides-v4 코드 받으면 `chunk_slides` 결과 비교 (push 요청 중)
 
 ## Codex 작업 설명
@@ -89,5 +91,5 @@
 
 ## 다음 할 일
 - Codex: C1 · C2 · C3 끝(Claude가 리뷰 후 커밋).
-- Claude: Gemini 키 받으면 실제 실행 → PR.
-- 사람(최의찬): Gemini API 키 정하기, 엄윤종에게 slides-v4 코드 push 요청, 검증 480 검수.
+- Claude: `feature/gemini-embed-fix` PR, 이후 레지스트리 DB · 작업 실행기.
+- 사람(최의찬): rc-v1 결과 엄윤종에게 전달, 서비스용 Gemini 키 · 결제 주체 팀과 정하기, 엄윤종에게 slides-v4 코드 push 요청, 검증 480 검수.
