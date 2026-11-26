@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -52,6 +53,20 @@ class FakeEmbedder(Embedder):
         return vectors
 
 
+_RETRY_IN = re.compile(r"retry in ([0-9.]+)\s*s", re.IGNORECASE)
+_RETRY_DELAY = re.compile(r"'retryDelay':\s*'([0-9.]+)s'")
+MAX_RETRY_WAIT = 90.0
+
+
+def retry_delay_seconds(exc: BaseException, attempt: int) -> float:
+    """429 · 5xx 뒤 기다릴 초. 오류에 서버가 준 대기 시간(retry in Ns · retryDelay)이 있으면 그 값 + 1초,
+    없으면 2**attempt. 어느 쪽이든 MAX_RETRY_WAIT를 넘지 않는다."""
+    message = str(exc)
+    match = _RETRY_IN.search(message) or _RETRY_DELAY.search(message)
+    wait = float(match.group(1)) + 1.0 if match else float(2**attempt)
+    return min(wait, MAX_RETRY_WAIT)
+
+
 class GeminiEmbedder(Embedder):
     """gemini-embedding-2, output_dimensionality=dim. task → task_type(RETRIEVAL_QUERY / RETRIEVAL_DOCUMENT).
 
@@ -60,7 +75,7 @@ class GeminiEmbedder(Embedder):
     """
 
     def __init__(self, model: str = "gemini-embedding-2", dim: int = 768,
-                 batch_size: int = 100, max_retries: int = 5) -> None:
+                 batch_size: int = 100, max_retries: int = 8) -> None:
         if dim <= 0:
             raise ValueError("dim must be positive")
         if batch_size <= 0:
@@ -114,7 +129,7 @@ class GeminiEmbedder(Embedder):
                     )
                     if not retryable or attempt >= self.max_retries:
                         raise
-                    time.sleep(2**attempt)
+                    time.sleep(retry_delay_seconds(exc, attempt))
             if len(batch_vectors) != len(batch):
                 raise RuntimeError(
                     f"Gemini returned {len(batch_vectors)} embeddings for {len(batch)} texts"
@@ -126,11 +141,14 @@ class GeminiEmbedder(Embedder):
 class CachedEmbedder(Embedder):
     """inner 임베더 앞에 붙는 파일 캐시. 키 = sha256(f"{name}|{dim}|{task}|{text}"), 파일 한 줄 = {"key", "vec"}.
 
-    캐시에 없는 텍스트만 inner로 한 번에 보내고, 결과를 파일 끝에 덧붙인다. 순서는 입력 순서 그대로.
+    캐시에 없는 텍스트만 flush_every개씩 inner로 보내고, 그때마다 파일 끝에 덧붙인다. 순서는 입력 순서 그대로.
     """
 
-    def __init__(self, inner: Embedder, cache_path: Path) -> None:
+    def __init__(self, inner: Embedder, cache_path: Path, flush_every: int = 100) -> None:
+        if flush_every <= 0:
+            raise ValueError("flush_every must be positive")
         self.inner = inner
+        self.flush_every = flush_every
         self.name = inner.name
         self.dim = inner.dim
         self.cache_path = Path(cache_path)
@@ -150,14 +168,16 @@ class CachedEmbedder(Embedder):
             if key not in self._cache:
                 missing.setdefault(key, text)
 
-        if missing:
-            missing_keys = list(missing)
-            vectors = self.inner.embed([missing[key] for key in missing_keys], task)
-            if len(vectors) != len(missing_keys):
+        # flush_every개씩 inner로 보내고 그때마다 파일에 덧붙인다. 중간에 실패해도 받은 만큼은 남는다.
+        missing_keys = list(missing)
+        for start in range(0, len(missing_keys), self.flush_every):
+            chunk_keys = missing_keys[start:start + self.flush_every]
+            vectors = self.inner.embed([missing[key] for key in chunk_keys], task)
+            if len(vectors) != len(chunk_keys):
                 raise ValueError("inner embedder returned a different number of vectors")
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             with self.cache_path.open("a", encoding="utf-8") as cache_file:
-                for key, vector in zip(missing_keys, vectors):
+                for key, vector in zip(chunk_keys, vectors):
                     stored = list(vector)
                     self._cache[key] = stored
                     cache_file.write(json.dumps({"key": key, "vec": stored}, ensure_ascii=False) + "\n")
