@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     # dev: 로컬 개발(기본 키 허용) / prod: 학과 서버(키가 없거나 기본값이면 시작 거부)
     trainer_env: Literal["dev", "prod"] = "prod"
     trainer_api_key: str = ""
-    registry_db_url: str = "postgresql+psycopg://easyq:easyq_dev@localhost:5433/easyq_registry"
+    # 비우면 {data_root}/registry/registry.db SQLite 파일(학과 서버 규칙상 DB 서버를 띄우지 않는다).
+    # PostgreSQL · RDS로 옮길 때는 이 값만 바꾼다. 예: postgresql+psycopg://user:pw@host:5432/easyq_registry
+    registry_db_url: str = ""
     data_root: Path = Path("/data/easyq")
     trainer_host: str = "127.0.0.1"
     trainer_port: int = 8000
@@ -21,6 +23,13 @@ class Settings(BaseSettings):
     inference_host: str = "127.0.0.1"
     inference_port: int = 8001
     judge_timeout_ms: int = 800
+
+    @property
+    def registry_url(self) -> str:
+        """실제로 접속할 레지스트리 DB 주소."""
+        if self.registry_db_url:
+            return self.registry_db_url
+        return f"sqlite:///{(self.data_root / 'registry' / 'registry.db').as_posix()}"
 
     @property
     def inference_base_url(self) -> str:

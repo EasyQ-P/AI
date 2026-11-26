@@ -28,6 +28,10 @@ per-file-target-version = { "scripts/**/*.py" = "py312" }
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic autogenerate 결과는 한 줄이 길다
+"trainer/migrations/versions/*.py" = ["E501"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["app", "modules", "retrieval"]
 

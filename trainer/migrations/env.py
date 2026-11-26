@@ -1,42 +1,52 @@
-"""Alembic 실행 환경. 접속 주소는 앱 설정(REGISTRY_DB_URL)을 그대로 쓴다."""
+"""Alembic 실행 환경. 접속 주소는 앱 설정(REGISTRY_DB_URL, 비우면 SQLite 파일)을 그대로 쓴다.
+
+SQLite는 ALTER TABLE이 제한적이라 render_as_batch로 테이블을 다시 만드는 방식의 마이그레이션을 만든다.
+"""
 
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
 
+import app.db.models  # noqa: F401  autogenerate가 reg_ 테이블을 보게 한다
 from app.core.config import get_settings
-from app.db import Base
-
-# import app.db.models  # TODO reg_ 테이블 모델을 만들면 여기서 불러와 autogenerate가 보게 한다
+from app.db import Base, make_engine
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().registry_db_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
+def _url() -> str:
+    # 테스트는 config에 sqlalchemy.url을 직접 넣는다. 없으면 앱 설정을 따른다.
+    return config.get_main_option("sqlalchemy.url") or get_settings().registry_url
+
+
 def run_migrations_offline() -> None:
+    url = _url()
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool
-    )
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+    engine = make_engine(_url())
+    with engine.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
+    engine.dispose()
 
 
 if context.is_offline_mode():
