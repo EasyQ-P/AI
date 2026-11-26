@@ -1,0 +1,57 @@
+# 학과 서버(Python 3.9, 가상환경 없음)용 학습서버 API 패키지. GPU 패키지(torch 등)는 서버에 있는 것을 쓴다.
+# 설치: python3 -m pip install --target /home/t26112/easyq-ai/.pylib -r trainer/requirements-server.txt (docs/work/server-setup.md)
+# 다시 만들기(의존성을 바꿨을 때): 위 세 줄을 두고 아래를 `uv export --package easyq-trainer --no-emit-workspace --no-dev --no-hashes --python 3.9` 결과로 바꾼다
+alembic==1.16.5 ; python_full_version < '3.10'
+alembic==1.20.1 ; python_full_version >= '3.10'
+annotated-doc==0.0.5
+annotated-types==0.7.0 ; python_full_version < '3.10'
+annotated-types==0.8.0 ; python_full_version >= '3.10'
+anyio==4.12.1 ; python_full_version < '3.10'
+anyio==4.16.0 ; python_full_version >= '3.10'
+click==8.1.8 ; python_full_version < '3.10'
+click==8.5.0 ; python_full_version >= '3.10'
+colorama==0.4.6 ; python_full_version < '3.10' and sys_platform == 'win32'
+exceptiongroup==1.3.2 ; python_full_version < '3.11'
+fastapi==0.128.8 ; python_full_version < '3.10'
+fastapi==0.162.0 ; python_full_version >= '3.10'
+greenlet==3.2.5 ; (python_full_version < '3.10' and platform_machine == 'AMD64') or (python_full_version < '3.10' and platform_machine == 'WIN32') or (python_full_version < '3.10' and platform_machine == 'aarch64') or (python_full_version < '3.10' and platform_machine == 'amd64') or (python_full_version < '3.10' and platform_machine == 'ppc64le') or (python_full_version < '3.10' and platform_machine == 'win32') or (python_full_version < '3.10' and platform_machine == 'x86_64')
+greenlet==3.5.6 ; (python_full_version == '3.10.*' and platform_machine == 'AMD64') or (python_full_version == '3.10.*' and platform_machine == 'WIN32') or (python_full_version == '3.10.*' and platform_machine == 'aarch64') or (python_full_version == '3.10.*' and platform_machine == 'amd64') or (python_full_version == '3.10.*' and platform_machine == 'ppc64le') or (python_full_version == '3.10.*' and platform_machine == 'win32') or (python_full_version == '3.10.*' and platform_machine == 'x86_64')
+h11==0.16.0
+httptools==0.9.0
+idna==3.20
+mako==1.3.12 ; python_full_version < '3.10'
+mako==1.4.3 ; python_full_version >= '3.10'
+markupsafe==3.0.4
+opentelemetry-api==1.45.2 ; python_full_version >= '3.10'
+psycopg==3.2.13 ; python_full_version < '3.10'
+psycopg==3.3.8 ; python_full_version >= '3.10'
+psycopg-binary==3.2.13 ; python_full_version < '3.10' and implementation_name != 'pypy'
+psycopg-binary==3.3.8 ; python_full_version >= '3.10' and implementation_name != 'pypy'
+pydantic==2.13.5 ; python_full_version < '3.10'
+pydantic==2.14.2 ; python_full_version >= '3.10'
+pydantic-core==2.46.5 ; python_full_version < '3.10'
+pydantic-core==2.50.2 ; python_full_version >= '3.10'
+pydantic-settings==2.11.0 ; python_full_version < '3.10'
+pydantic-settings==2.15.0 ; python_full_version == '3.10.*'
+pydantic-settings==2.16.2 ; python_full_version >= '3.11'
+python-dotenv==1.2.1 ; python_full_version < '3.10'
+python-dotenv==1.2.4 ; python_full_version >= '3.10'
+pyyaml==6.0.3
+sqlalchemy==2.0.58 ; python_full_version < '3.11'
+sqlalchemy==2.1.8 ; python_full_version >= '3.11'
+starlette==0.49.3 ; python_full_version < '3.10'
+starlette==1.7.0 ; python_full_version == '3.10.*'
+starlette==1.10.0 ; python_full_version >= '3.11'
+tomli==2.5.0 ; python_full_version < '3.11'
+typing-extensions==4.16.0
+typing-inspection==0.4.2 ; python_full_version < '3.10'
+typing-inspection==0.4.5 ; python_full_version >= '3.10'
+tzdata==2026.6 ; sys_platform == 'win32'
+uvicorn==0.39.0 ; python_full_version < '3.10'
+uvicorn==0.54.0 ; python_full_version >= '3.10'
+uvloop==0.23.0 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
+watchfiles==1.1.1 ; python_full_version < '3.10'
+watchfiles==1.3.0 ; python_full_version >= '3.10'
+websockets==15.0.1 ; python_full_version < '3.10'
+websockets==16.1.1 ; python_full_version == '3.10.*'
+websockets==17.4 ; python_full_version >= '3.11'
