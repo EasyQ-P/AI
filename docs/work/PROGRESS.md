@@ -33,11 +33,14 @@
 ### 단계
 - [x] 0. 지침 통일(AGENTS.md 원본, CLAUDE.md는 `@AGENTS.md`), 이 파일
 - [x] 1. 뼈대 · 인터페이스: config(rc-v1) · keyword · embedding · chunking · search(HybridSearcher 구현 완료)
-- [ ] 2. C1 키워드 검색 (Codex)
-- [ ] 3. C2 임베딩 (Codex)
-- [ ] 4. 교안 청킹 `chunk_slides` · `bge_token_spans` · 발화 `chunk_utterances` (Claude)
-- [ ] 5. C3 스크립트: 검증 후보 · 어려운 오답 (Codex, C1 · C2 다음)
-- [ ] 6. 리뷰 · 통합 · 실제 데이터로 실행 · PR (Claude)
+- [x] 2. C1 키워드 검색 (Codex)
+- [x] 3. C2 임베딩 (Codex)
+- [x] 4. 교안 청킹 `chunk_slides` · `bge_token_spans` · 발화 `chunk_utterances` (Claude, 실제 bge 토크나이저 실행은 아직)
+- [x] 5. C3 스크립트: 검증 후보 · 어려운 오답 (Codex, C1 · C2 다음)
+- [~] 6. 리뷰 · 통합 · 실제 데이터로 실행 · PR (Claude)
+  - 리뷰 끝: meta 파일 이름 분리(`validation_meta.json` · `hard_negatives_meta.json`), 오답 행 `label_source=HARD_NEGATIVE`, pytest `pythonpath=["."]`
+  - fake 임베더 실행(11/26): 검증 480 × 후보 20, 오답 2100(700 × 3, 발화 1668 · 교안 432), 정답 근거 후보 포함률 92.6%
+  - 남은 것: Gemini 키로 실제 실행, push · PR
 - [ ] 7. 엄윤종 slides-v4 코드 받으면 `chunk_slides` 결과 비교 (push 요청 중)
 
 ## Codex 작업 설명
@@ -66,13 +69,13 @@
 1) `scripts/search/build_val_candidates.py`
    - `dataset/validation.jsonl` 480문항 → `HybridSearcher.search_many([(question_text, lecture_id)])`
    - 출력 `data/interim/search/<이름>/validation.jsonl`: 입력 필드 그대로 + `candidates`(근거 ID 20개, 검색 순위) + `retrieval_config_version`
-   - `meta.json`: `RetrievalConfig.to_dict()`, 임베더 이름, 문항 수, 후보 수 분포, 진단용으로 `synth_evidence_id`가 후보 안에 든 비율(전체 · 상위 5 · 상위 10)
+   - `validation_meta.json`: `RetrievalConfig.to_dict()`, 임베더 이름, 문항 수, 후보 수 분포, 진단용으로 `synth_evidence_id`가 후보 안에 든 비율(전체 · 상위 5 · 상위 10)
 2) `scripts/search/hard_negatives.py`
    - 대상: `dataset/train.jsonl` 중 `source == MIT_OCW` · `label == ANSWERABLE` (700)
    - 같은 강의 검색 → 정답 `evidence_id`와 이웃(발화 T±1, 같은 쪽 다른 조각) 제외 → 순위대로 `--max-neg`(기본 3)개
    - 출력 `data/interim/search/<이름>/hard_negatives.jsonl`: 학습 필드 형식(README 2장) 그대로, 원 쌍에서 질문 쪽 필드 복사 + 근거 쪽은 고른 조각(`evidence_text`는 발화면 ko, 교안이면 영어 원문, `evidence_lang`도 맞춤) + `label=INSUFFICIENT_EVIDENCE`, `target=0`, `is_hard_negative=true`, `gen_method=HARD_NEGATIVE`, `pair_id=<원 pair_id>:hn<순번>`, `retrieval_config_version`
    - `recheck.jsonl`: Sonnet 재확인용 `{pair_id, question_text, evidence_text}` (파일로만, 화면 출력 금지)
-   - `meta.json`: 설정, 대상 수, 붙은 오답 수 분포(0~3개), 오답 출처 TRANSCRIPT/DOCUMENT 분포, 정답 근거가 후보 안에 있던 비율
+   - `hard_negatives_meta.json`: 설정, 대상 수, 붙은 오답 수 분포(0~3개), 오답 출처 TRANSCRIPT/DOCUMENT 분포, 정답 근거가 후보 안에 있던 비율
 - 테스트 `scripts/search/tests/`: 작은 가짜 pack(tmp_path)과 FakeEmbedder로 두 스크립트의 출력 형식 · 이웃 제외 · AI Hub 거부.
   루트 `pyproject.toml`의 `testpaths`에 `scripts/search/tests` 추가(3.9 CI는 경로를 직접 주므로 영향 없음). 이 한 줄은 Codex가 고쳐도 된다.
 
@@ -80,9 +83,11 @@
 - (없음)
 
 ## Codex 메모
-- (없음)
+- C1: Kiwi 지연 생성 키워드 토큰화와 Okapi BM25 색인·필터·결정적 정렬을 구현하고, 빠른 CI에 keyword extra를 연결했다.
+- C2: 결정적 단위 Fake 임베딩, Gemini 배치·재시도, JSONL 파일 캐시, 순수 Python 코사인 검색을 구현했다.
+- C3: 검증 후보·어려운 오답 생성 스크립트와 통계 메타, 이웃 제외·AI Hub 거부 가짜 pack 테스트를 구현했다.
 
 ## 다음 할 일
-- Codex: C1 → C2 → C3 순서.
-- Claude: 단계 4(청킹) 진행, Codex 결과 리뷰.
+- Codex: C1 · C2 · C3 끝(Claude가 리뷰 후 커밋).
+- Claude: Gemini 키 받으면 실제 실행 → PR.
 - 사람(최의찬): Gemini API 키 정하기, 엄윤종에게 slides-v4 코드 push 요청, 검증 480 검수.
