@@ -68,3 +68,37 @@ def test_build_merges_aihub_and_guards_it():
 def test_build_rejects_course_in_both_splits():
     with pytest.raises(ValueError):
         build([pair("o1", "ANSWERABLE")], [], [pair("v1", "ANSWERABLE", split="VALIDATION")], None, 1)
+
+
+def hn(base: str, rank: int, etype: str = "TRANSCRIPT", text: str = "오답 근거") -> dict:
+    return pair(f"{base}:hn{rank}", "INSUFFICIENT_EVIDENCE", is_hard_negative=True, gen_method="HARD_NEGATIVE",
+                label_source="HARD_NEGATIVE", evidence_type=etype, evidence_text=text)
+
+
+def test_attach_hard_negatives_rank_max_and_recheck():
+    from build_splits import attach_hard_negatives
+
+    ocw = [pair("a1", "ANSWERABLE"), pair("a2", "ANSWERABLE"), pair("o1", "OPINION")]
+    hns = [hn("a1", r) for r in (3, 1, 2)] + [hn("a2", 1, "DOCUMENT"), hn("gone", 1)]
+    checked = {"a1:hn1": True, "a1:hn2": False, "a1:hn3": False, "a2:hn1": False}
+    rows, stats = attach_hard_negatives(ocw, hns, max_per_question=2, checked=checked)
+    assert [r["pair_id"] for r in rows] == ["a1:hn2", "a1:hn3", "a2:hn1"]  # hn1은 재확인에서 빠지고 다음 순위로
+    assert all(r["label_source"] == "LLM" and r["split"] == "TRAIN" for r in rows)
+    assert stats["dropped_recheck_answerable"] == 1 and stats["per_question"] == {"1": 1, "2": 1}
+    assert stats["by_evidence_type"] == {"TRANSCRIPT": 2, "DOCUMENT": 1}
+    # 재확인 결과를 주면 확인 안 한 오답(a2:hn1)은 쓰지 않는다
+    rows2, stats2 = attach_hard_negatives(ocw, hns, 2, {"a1:hn2": False})
+    assert [r["pair_id"] for r in rows2] == ["a1:hn2"] and stats2["skipped_unchecked"] == 3
+    with pytest.raises(ValueError):
+        attach_hard_negatives(ocw, [pair("a1:hn1", "ANSWERABLE")], 2, None)
+
+
+def test_build_with_hard_negatives_meta():
+    ocw = [pair("a1", "ANSWERABLE", evidence_type="TRANSCRIPT"), pair("a2", "ANSWERABLE", evidence_type="DOCUMENT")]
+    val = [pair("v1", "ANSWERABLE", course="6.0001_F16", split="VALIDATION")]
+    hns = [hn("a1", 1), hn("a2", 1, "DOCUMENT", "긴 교안 근거 문장")]
+    train, _, meta = build(ocw, [], val, None, 1, None, hns, 2, None)
+    assert len(train) == 4 and all(list(r) == TRAIN_FIELDS for r in train)
+    assert meta["train"]["hard_negatives"]["rechecked"] is False
+    lab = meta["train"]["ocw_evidence_by_label"]
+    assert lab["ANSWERABLE"]["document_ratio"] == 0.5 and lab["INSUFFICIENT_EVIDENCE"]["document_ratio"] == 0.5

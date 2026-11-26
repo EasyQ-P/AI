@@ -116,15 +116,83 @@ def check_aihub(ocw: list[dict], squad: list[dict], val: list[dict], aihub: list
         raise ValueError(f"검증셋에 AI Hub · SQuAD 행 {len(bad)}개")
 
 
+def base_pair_id(hn_pair_id: str) -> tuple[str, int]:
+    """'<원 쌍 ID>:hn3' → ('<원 쌍 ID>', 3)"""
+    base, _, rank = hn_pair_id.rpartition(":hn")
+    if not base or not rank.isdigit():
+        raise ValueError(f"어려운 오답 pair_id 형식이 아님(<원 ID>:hnN): {hn_pair_id}")
+    return base, int(rank)
+
+
+def attach_hard_negatives(
+    ocw: list[dict], hard_negatives: list[dict], max_per_question: int, checked: dict[str, bool] | None,
+) -> tuple[list[dict], dict]:
+    """고른 OCW 답변 가능 쌍에 어려운 오답을 질문당 max_per_question개까지 순위대로 붙인다 (3.3.4 5단계).
+
+    checked: Sonnet 재확인 결과 {pair_id: answerable}. 주면 재확인을 통과한(answerable=false) 오답만 쓰고,
+    답할 수 있음(true)과 아직 확인 안 한 오답은 뺀다. None이면 재확인 전(메타에 표시).
+    label_source는 생성 의도 라벨이라 LLM으로 둔다.
+    """
+    targets = {p["pair_id"] for p in ocw if p["label"] == "ANSWERABLE"}
+    by_base: dict[str, list[tuple[int, dict]]] = {}
+    for h in hard_negatives:
+        if h.get("label") != "INSUFFICIENT_EVIDENCE" or not h.get("is_hard_negative"):
+            raise ValueError(f"어려운 오답이 아닌 행: {h.get('pair_id')}")
+        base, rank = base_pair_id(h["pair_id"])
+        if base in targets:
+            by_base.setdefault(base, []).append((rank, h))
+    out, dropped, unchecked, counts = [], 0, 0, Counter()
+    for base in sorted(targets):
+        picked = []
+        for _, h in sorted(by_base.get(base, []), key=lambda x: x[0]):
+            if checked is not None:
+                if h["pair_id"] not in checked:
+                    unchecked += 1
+                    continue
+                if checked[h["pair_id"]]:
+                    dropped += 1
+                    continue
+            if len(picked) < max_per_question:
+                picked.append({**h, "label_source": "LLM", "split": "TRAIN"})
+        counts[len(picked)] += 1
+        out += picked
+    stats = {
+        "attached": len(out),
+        "per_question": {str(k): v for k, v in sorted(counts.items())},
+        "dropped_recheck_answerable": dropped,
+        "skipped_unchecked": unchecked,
+        "rechecked": checked is not None,
+        "by_evidence_type": dict(Counter(h["evidence_type"] for h in out)),
+    }
+    return out, stats
+
+
+def evidence_by_label(rows: list[dict]) -> dict:
+    """라벨별 근거 종류 비율 · 길이(단어 수 중앙값). 근거 종류나 길이로 라벨이 드러나는지 확인용."""
+    out = {}
+    for lab in sorted({r["label"] for r in rows}):
+        rs = [r for r in rows if r["label"] == lab]
+        by_type = {}
+        for t in sorted({r["evidence_type"] for r in rs}):
+            ws = sorted(len(r["evidence_text"].split()) for r in rs if r["evidence_type"] == t)
+            by_type[t] = {"n": len(ws), "words_median": ws[len(ws) // 2]}
+        doc_ratio = round(sum(r["evidence_type"] == "DOCUMENT" for r in rs) / len(rs), 3)
+        out[lab] = {"n": len(rs), "document_ratio": doc_ratio, "by_evidence_type": by_type}
+    return out
+
+
 def build(
     ocw: list[dict], squad: list[dict], val: list[dict], ocw_counts: dict | None, seed: int,
-    aihub: list[dict] | None = None,
+    aihub: list[dict] | None = None, hard_negatives: list[dict] | None = None, hn_max: int = 2,
+    hn_checked: dict[str, bool] | None = None,
 ):
     aihub = aihub or []
     check_aihub(ocw, squad, val, aihub)
     if ocw_counts:
         ocw = trim(ocw, ocw_counts, seed)
-    train = [to_train(p) for p in ocw + squad + aihub]
+    hn_rows, hn_stats = attach_hard_negatives(ocw, hard_negatives, hn_max, hn_checked) if hard_negatives else (
+        [], None)
+    train = [to_train(p) for p in ocw + hn_rows + squad + aihub]
     validation = [to_eval(p) for p in val]
     tc = {r["course_id"] for r in train} - {None}
     vc = {r["course_id"] for r in validation}
@@ -141,6 +209,8 @@ def build(
             "by_evidence_type_label": {f"{t}/{lab}": n for (t, lab), n in
                                        sorted(Counter((r["evidence_type"], r["label"]) for r in train).items())},
             "by_course": dict(Counter(str(r["course_id"]) for r in train)),
+            "hard_negatives": hn_stats,
+            "ocw_evidence_by_label": evidence_by_label([r for r in train if r["source"] == "MIT_OCW"]),
         },
         "validation": {
             "rows": len(validation),
@@ -163,11 +233,20 @@ def main() -> None:
     ap.add_argument("--aihub", type=Path, default=None, help="aihub_sample.py의 pairs.jsonl (학과 서버에서만)")
     ap.add_argument("--ocw-counts", type=json.loads, default=None)
     ap.add_argument("--seed", type=int, default=20261122)
+    ap.add_argument("--hard-negatives", type=Path, nargs="*", default=None,
+                    help="scripts/search/hard_negatives.py의 hard_negatives.jsonl(여러 개 가능)")
+    ap.add_argument("--hn-max", type=int, default=2, help="질문당 어려운 오답 최대 개수(설계 기본 2)")
+    ap.add_argument("--hn-recheck", type=Path, nargs="*", default=None,
+                    help="recheck_batch.py의 result.jsonl(여러 개 가능). 통과한(answerable=false) 오답만 쓴다")
     args = ap.parse_args()
 
+    hard_negatives = [p for f in args.hard_negatives for p in read_jsonl(f)] if args.hard_negatives else None
+    hn_checked = ({r["pair_id"]: bool(r["answerable"]) for f in args.hn_recheck for r in read_jsonl(f)}
+                  if args.hn_recheck else None)
     train, validation, meta = build(
         [p for f in args.ocw for p in read_jsonl(f)], read_jsonl(args.squad), read_jsonl(args.val),
         args.ocw_counts, args.seed, read_jsonl(args.aihub) if args.aihub else None,
+        hard_negatives, args.hn_max, hn_checked,
     )
     out = args.out_root / args.name
     out.mkdir(parents=True, exist_ok=True)
@@ -177,13 +256,17 @@ def main() -> None:
         "name": args.name,
         "created": dt.date.today().isoformat(),
         "inputs": {"ocw": [str(f) for f in args.ocw],"squad": str(args.squad), "val": str(args.val),
-                   "aihub": str(args.aihub) if args.aihub else None},
+                   "aihub": str(args.aihub) if args.aihub else None,
+                   "hard_negatives": [str(f) for f in args.hard_negatives] if args.hard_negatives else None,
+                   "hn_recheck": [str(f) for f in args.hn_recheck] if args.hn_recheck else None},
         "ocw_counts": args.ocw_counts,
+        "hn_max": args.hn_max if args.hard_negatives else None,
         "seed": args.seed,
         "pending": (["AI Hub 500(학과 서버)"] if not args.aihub else [])
         + ["validation candidates · gold_in_candidates(검색 모듈)",
-           "validation 사람 전수 확인(label_source → LLM_HUMAN)", "test.jsonl", "평가용 교안 조각 파일",
-           "hard negative"],
+           "validation 사람 전수 확인(label_source → LLM_HUMAN)", "test.jsonl", "평가용 교안 조각 파일"]
+        + ([] if args.hard_negatives else ["hard negative"])
+        + (["hard negative Sonnet 재확인"] if args.hard_negatives and not args.hn_recheck else []),
         **meta,
     }
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -23,7 +23,10 @@
 - `synth_batch.py prepare --lectures ... --part-size 50`: 고른 강의의 청크 전부를 배치로 만들고 50청크 묶음 파일(`parts/in_NN.jsonl`)도 만든다(B3). 강의 선정 기준은 프로젝트 노트 `학습강의_선정안.md`.
 - `sample_pairs.py`: 합성 쌍(`pairs.jsonl`)에서 라벨 비율(기본 168/168/144)을 맞춰 청크당 1문항, 강의 비율대로 seed로 뽑는다. 예: `uv run python scripts/data/sample_pairs.py --batch val-6.0001-v3_1 --name val-480`
 - `build_eval_slides.py`: `slides-v4`에서 평가 강좌(6.0001 검증 · 6.172 시험) 조각만 골라 평가용 교안 조각 파일 `data/processed/<이름>/eval_reference_chunks.jsonl`(lecture_id, source_key, page_no, chunk_index, text)과 `meta.json`(청킹 규칙 · 일치 판정 기준 5단어 shingle · 조각 80% · 강의 30%)을 만든다(es-vN 초안, 7.4.2 등록용).
-- `build_splits.py`: OCW 합성 쌍(700/700/600으로 seed 추출) + SQuAD 500을 3.3.3 학습 필드의 `train.jsonl`로, 검증 480을 평가 필드의 `validation.jsonl`(후보 20개 · gold_in_candidates는 검색 모듈 뒤에 채움)로 합쳐 `data/processed/<이름>/`에 둔다. 7.4.2 등록 전 단계. `--ocw`에 발화 · 교안 쌍 파일을 함께 주고 `--ocw-counts`를 근거 종류별(`{"TRANSCRIPT": {...}, "DOCUMENT": {...}}`)로 주면 B안 구성으로 뽑는다. `--aihub`로 AI Hub 쌍도 넣을 수 있고, 이때 결과물도 AI Hub 데이터로 다룬다. AI Hub 행이 다른 입력에 섞이거나 검증셋에 AI Hub · SQuAD 행이 있으면 멈춘다.
+- `build_splits.py`: OCW 합성 쌍(700/700/600으로 seed 추출) + SQuAD 500을 3.3.3 학습 필드의 `train.jsonl`로, 검증 480을 평가 필드의 `validation.jsonl`(후보 20개 · gold_in_candidates는 검색 모듈 뒤에 채움)로 합쳐 `data/processed/<이름>/`에 둔다. 7.4.2 등록 전 단계. `--ocw`에 발화 · 교안 쌍 파일을 함께 주고 `--ocw-counts`를 근거 종류별(`{"TRANSCRIPT": {...}, "DOCUMENT": {...}}`)로 주면 B안 구성으로 뽑는다. `--aihub`로 AI Hub 쌍도 넣을 수 있고, 이때 결과물도 AI Hub 데이터로 다룬다. AI Hub 행이 다른 입력에 섞이거나 검증셋에 AI Hub · SQuAD 행이 있으면 멈춘다. `--hard-negatives`(검색 모듈 결과) · `--hn-max`(질문당, 기본 2) · `--hn-recheck`(재확인 결과)를 주면 재확인을 통과한 어려운 오답만 순위대로 붙이고, 라벨별 근거 종류 비율 · 길이를 `meta.json`에 남긴다.
+- `recheck_batch.py` + `prompts/hn_recheck_v1.md`: 어려운 오답 Sonnet 재확인("이 근거로 답할 수 있나", 3.3.4 5단계). `prepare`는 질문당 통과 개수가 `--hn-max`가 되도록 확인 안 한 오답을 순위대로 고르고(`--checked`로 이전 결과를 주면 빠진 자리 보충), `ingest`는 `result.jsonl`(pair_id, answerable, reason)로 모은다. 결과는 `data/interim/recheck/<이름>/`.
+- `review_sample.py`: 학습셋 무작위 10% 사람 검수표(OCW 합성 쌍, 근거 종류 × 라벨별 비율 유지, CSV)를 만들고(`make`), 채운 표로 라벨 오류율을 센다(`summary`). 결과는 `data/interim/review/<이름>/`.
+- `build_search_pack.py`: `scripts/search/hard_negatives.py`가 읽는 검색 묶음(train 답변 가능 쌍 + 한국어 발화 · 교안 색인)을 만든다. 어려운 오답을 다시 뽑아야 할 때 쓴다.
 
 ## 검증셋 val-6.0001-v3_1 만든 순서 (2026-11-22)
 스크립트 하나로 다시 만들 수 없어 순서를 적어 둔다. 자세한 기록은 `data/interim/synth/val-6.0001-v3_1/RESUME.md`.
