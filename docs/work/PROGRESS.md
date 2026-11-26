@@ -24,7 +24,10 @@
 | `docs/work/PROGRESS.md` | 둘 다 (자기 칸만) |
 
 ### 단계
-- [ ] 1. 레지스트리 DB: `reg_` 테이블 10개(8.2.38) 모델 · 첫 마이그레이션 · SQLite 테스트 (Claude, 브랜치 `feature/registry-db`)
+- [x] 1. 레지스트리 DB: `reg_` 테이블 10개(8.2.38) 모델 · 첫 마이그레이션 · SQLite 테스트 (Claude, 브랜치 `feature/registry-db`)
+  - `trainer/app/db/models.py`(JSON은 PG에서만 JSONB, 상태는 CHECK, 시각은 UTC aware), 마이그레이션 `20261126_4d5f3a7aaa3d`(upgrade · check · downgrade 확인), 테스트 `trainer/tests/test_registry_db.py`
+  - 기본 주소: `REGISTRY_DB_URL`이 비면 `{DATA_ROOT}/registry/registry.db`. SQLite는 접속마다 foreign_keys · WAL · busy_timeout
+  - 주의: 테이블 간 relationship을 두지 않아 한 세션에서 부모 · 자식을 같이 넣을 때는 부모를 먼저 flush
 - [ ] 2. 작업 실행기: 202 + job_id, GPU 잠금(609), 중단, 재시작 후 정리, 자기 프로세스만 관리 (Claude)
 - [ ] 3. 기본 API: 7.4.1~4 · 7.4.24~25 (Codex)
 - [ ] 4. 학과 서버 1차 올리기: `pip --user`, API 실행, SSH 터널로 상태 확인 (최의찬 + Claude)
@@ -39,6 +42,7 @@
 - 남은 것: 엄윤종 slides-v4 코드 받으면 `chunk_slides` 결과 비교, 실제 bge 토크나이저로 청킹 실행.
 
 ## 질문 (답이 필요한 것)
+- `reg_datasets.status` 값 목록이 설계서(8.2.38 · 7.4.3)에 없다. 지금은 제약 없이 문자열. 예: READY / ARCHIVED 중 무엇을 쓸지 정하면 CHECK 추가.
 - 팀 합의: 레지스트리 DB SQLite, 판정 모델 강연 중에만 적재(백엔드가 강연 시작 · 종료를 알려야 함). `docs/work/design-changes.md` 참고.
 - 서버 관리자: 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용, `/data/easyq` 사용 가능 여부.
 
