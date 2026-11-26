@@ -2,7 +2,7 @@
 name = "easyq-ai"
 version = "0.1.0"
 description = "EasyQ AI학습서버(trainer)와 공용 검색 패키지(retrieval)"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = ["easyq-trainer", "retrieval"]
 
 [tool.uv]
@@ -16,22 +16,32 @@ easyq-trainer = { workspace = true }
 retrieval = { workspace = true }
 
 [dependency-groups]
+# 데이터 구축 스크립트(scripts/data/)용. 로컬 PC(Python 3.12)에서만 돌리므로 3.12 이상에서만 설치한다.
+# 학과 서버(3.9)에는 깔리지 않는다(pymupdf 2.x는 3.11 이상). build_splits.py는 표준 라이브러리만 써서 서버에서도 돈다.
 data = [
-    "kiwipiepy>=0.24.1",
-    "pymupdf>=2.1",
-    "tokenizers>=0.20",
+    "kiwipiepy>=0.24.1; python_version >= '3.12'",
+    "pymupdf>=2.1; python_version >= '3.12'",
+    "tokenizers>=0.20; python_version >= '3.12'",
 ]
 dev = ["ruff>=0.6", "pytest>=8", "httpx>=0.27"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+# 학과 서버 Python이 3.9라 trainer · retrieval은 3.9 문법으로 쓴다(로컬 개발은 3.12).
+# 서버에서 돌리지 않는 데이터 스크립트는 3.12 기준을 유지한다.
+target-version = "py39"
+per-file-target-version = { "scripts/**/*.py" = "py312" }
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic autogenerate 결과는 한 줄이 길다
+"trainer/migrations/versions/*.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "modules", "retrieval"]
 
 [tool.pytest.ini_options]
-testpaths = ["retrieval/tests", "trainer/tests", "scripts/data/tests"]
+testpaths = ["retrieval/tests", "trainer/tests", "scripts/search/tests", "scripts/data/tests"]
+pythonpath = ["."]  # scripts.search.* import용

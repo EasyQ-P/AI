@@ -5,7 +5,7 @@
 - 공개 강의 자료 수집(MIT OCW 등) · 출처 · 라이선스 기록
 - 질문-근거 쌍 생성(LLM 합성 초안) → 2인 교차 검수
 - 데이터 분석 · 강좌 단위 분할(학습 · 검증 · 시험)
-- 결과는 `/data/easyq/upload/<폴더>/`에 train.jsonl · validation.jsonl · test.jsonl로 두고 7.4.2로 등록한다
+- 결과는 `/home/t26112/easyq-data/upload/<폴더>/`(학과 서버에 /data 없음, 2026-11-26 변경)에 train.jsonl · validation.jsonl · test.jsonl로 두고 7.4.2로 등록한다
 
 스크립트만 이 폴더에 두고, 만들어진 데이터는 레포에 올리지 않는다.
 

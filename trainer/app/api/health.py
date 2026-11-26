@@ -1,20 +1,39 @@
 """7.4.1 서버 상태 확인 (T-19). worker 판정 어댑터가 10초마다 부른다."""
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.errors import ok
+from app.db import get_session
+from app.db.models import RegDeployment
+from app.jobs.runner import get_runner
 from modules.inference import serving_state
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-async def health() -> dict:
-    s = serving_state()
+def health(session: Annotated[Session, Depends(get_session)]) -> dict:
+    deployment = session.scalars(
+        select(RegDeployment).order_by(RegDeployment.deployment_seq.desc()).limit(1)
+    ).first()
+    if deployment is None:
+        mode = "LLM_ONLY"
+        serving_version = None
+        threshold = None
+    else:
+        mode = deployment.mode
+        serving_version = deployment.serving_version
+        threshold = deployment.threshold
+
+    loaded = serving_state().loaded
     return ok({
-        "status": "ok" if s.loaded or s.mode == "LLM_ONLY" else "degraded",
-        "mode": s.mode,
-        "serving_version": s.serving_version,
-        "threshold": s.threshold,
-        "gpu_busy": s.gpu_busy,
+        "status": "degraded" if mode == "CUSTOM" and not loaded else "ok",
+        "mode": mode,
+        "serving_version": serving_version,
+        "threshold": threshold,
+        "gpu_busy": get_runner().gpu_job(session) is not None,
     })

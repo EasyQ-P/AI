@@ -20,7 +20,11 @@
         --val data/interim/synth/val-6.0001-v3_1/val-480/pairs.jsonl \
         --ocw-counts '{"ANSWERABLE":700,"INSUFFICIENT_EVIDENCE":700,"OPINION":600}'
 출력: data/processed/<이름>/train.jsonl, validation.jsonl, meta.json
+
+학과 서버(Python 3.9)에서 --aihub로 합칠 수 있게 표준 라이브러리만 쓰고 3.9에서 도는 문법만 쓴다.
 """
+
+from __future__ import annotations
 
 import argparse
 import datetime as dt
