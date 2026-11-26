@@ -20,7 +20,7 @@
 | 파일 | 담당 |
 |---|---|
 | `trainer/app/db/*` · `trainer/migrations/*` · `trainer/app/jobs/*` | Claude |
-| `trainer/app/api/*` 기본 API(7.4.1~4 · 7.4.24~25) | Codex (DB 다음, 작업 설명은 그때 적는다) |
+| `trainer/app/api/health.py` · `datasets.py` · `jobs.py` · `faults.py`, `trainer/app/core/timefmt.py`(새로), `trainer/modules/dataset/*`, 해당 테스트 | Codex (아래 "단계 3 작업 설명") |
 | `docs/work/PROGRESS.md` | 둘 다 (자기 칸만) |
 
 ### 단계
@@ -35,11 +35,46 @@
   - 실패하면 종류별 장애 코드(수집 602 · 학습 606 · 평가 607 · 변환 604)로 `modules.fault.record_fault`(reg_faults + `logs/fault-날짜.jsonl`)
   - `DEFAULT_HANDLERS`는 비어 있다 → 지금 제출하면 600. 단계 6에서 학습 · 평가 · 변환 모듈을 여기에 넣는다. 시험용 핸들러는 `app/jobs/sample.py`
   - 서버를 켜려면 먼저 `alembic upgrade head`(reg_jobs가 없으면 시작 때 실패)
-- [ ] 3. 기본 API: 7.4.1~4 · 7.4.24~25 (Codex)
+- [ ] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`)
 - [ ] 4. 학과 서버 1차 올리기: `pip --user`, API 실행, SSH 터널로 상태 확인 (최의찬 + Claude)
 - [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 적재 · 해제, 800 ms 측정 (Claude)
 - [ ] 6. 학습 한 바퀴: 학습 → 평가 → fp16 변환 → 등록 → 서빙 전환 · 롤백 (Claude, 테스트 Codex)
 - [ ] 7. 백엔드 연동: EC2 → SSH 터널 → 판정 호출, 시간 초과 대체 (최의찬 + 조현준 + Claude)
+
+### 단계 3 작업 설명 (Codex)
+> 설계 원문: `docs/design/ch07_api.md` 7.4 머리말 표(공통 규칙) · 각 절, `ch06_process.md` 6.4.1 · 6.4.2, `ch03_data.md` 3.3.3(필드). 이 설명에 없는 설계 결정이 필요하면 구현하지 말고 "질문"에 적고 멈춘다.
+
+**쓸 것 (이미 있음, 고치지 말 것)**
+- DB: `from app.db import get_session`(FastAPI `Depends(get_session)`), 모델 `app.db.models`(RegDataset · RegTestSet · RegJob · RegFault · RegDeployment). 테이블을 바꿔야 하면 멈추고 질문.
+- 작업: `from app.jobs.runner import get_runner` → `get_runner().gpu_job(session)`(GPU 작업 job_id 또는 None). 작업 제출 · 중단 API(7.4.6~9 등)는 이번 범위 아님.
+- 오류: `raise TrainerError(Code.NOT_FOUND, ...)` 등, 성공은 `ok(data)`. 응답 형식 `{result_code, result_msg, data}`.
+- 담당이 Claude인 `app/db/*` · `migrations/*` · `app/jobs/*` · `modules/fault/*`, 그리고 `app/main.py`는 건드리지 않는다.
+
+**공통**
+- 시각은 ISO 8601 **+09:00**로 내보낸다(DB는 UTC). `app/core/timefmt.py`에 `to_kst_iso(dt) -> Optional[str]` 하나 만들어 모든 API가 쓴다.
+- 목록 API의 `page` · `size`: 설계서에 기본값이 없어 **page=1부터, size 기본 20 · 최대 100**으로 한다. 응답에 `total_count`.
+- 없는 항목은 613. 목록 필터 값이 허용 목록 밖이면 422 → 기존 핸들러가 601로 바꾼다(손대지 않음).
+
+**3a. 조회 API (먼저, 작은 PR 하나)**
+| API | 구현 |
+|---|---|
+| 7.4.1 GET /health | `mode` · `serving_version` · `threshold`: reg_deployments에서 `deployment_seq` 가장 큰 행. 행이 없으면 LLM_ONLY · null · null. `gpu_busy`: `gpu_job(session) is not None`. `status`: 판정 모델 적재 여부는 5단계에서 붙으므로 지금은 `modules.inference.serving_state().loaded`를 그대로 쓰고, CUSTOM인데 미적재면 degraded. worker가 10초마다 부르므로 DB가 비어 있어도 200이어야 한다 |
+| 7.4.3 GET /datasets | reg_datasets 최신순(created_at desc). 항목 필드는 7.4.3 그대로, `test_use_count`는 reg_test_sets에서 |
+| 7.4.4 GET /datasets/{v} | 7.4.4 필드 그대로. 없으면 613 |
+| 7.4.24 GET /jobs | `type` · `status` 필터(값은 `JOB_TYPES` · `JOB_STATUSES`), 최신순. 항목: job_id · type · status · progress · created_at · finished_at |
+| 7.4.25 GET /jobs/{id} | type · status · progress · stage · hold_reason · result · fault_id. 없으면 613 |
+| 7.4.27 GET /faults | `from` · `to`(ISO 8601) · `code` · `job_id` 필터, 최신순 |
+
+테스트: 임시 SQLite에 `alembic upgrade head` 후 `app.dependency_overrides[get_session]`로 바꿔 끼운다(`trainer/tests/test_registry_db.py` · `test_job_runner.py`의 fixture 참고). X-API-Key 헤더는 conftest의 `test-key`. 빈 DB · 행 있음 · 필터 · 613 · +09:00 형식을 확인.
+
+**3b. 7.4.2 데이터셋 등록 (3a 머지 뒤)**
+- `modules/dataset.validate_dataset(source_dir)`에 6.4.1 검사: 3.3.3 필드, 검증 · 시험 후보 ≤ 20 · 정답 근거가 후보 안, 강좌가 두 분할에 겹치지 않음, 검증 · 시험에 AI Hub 행 없음, 시험셋은 사람 라벨만. 어긋나면 601 + `errors`(파일 · 행 번호 · 사유, **행 내용은 넣지 않음**) + `record_fault(601, "dataset", None, 요약)`.
+- `source_dir`는 `{DATA_ROOT}/upload/` 아래만 받는다(`..`나 밖 경로는 601). 통과하면 `{DATA_ROOT}/datasets/ds-vN/`로 복사하고 reg_datasets에 등록. 검증 · 시험셋 내용이 이전 버전과 같으면 val/test 버전을 이어 쓰고, 다르면 새 번호(내용 해시로 비교).
+- `reg_datasets.status`는 값 목록이 아직 없다(질문 1번). **임시로 `READY`** 를 넣고 코드에 TODO를 남긴다.
+- 평가용 교안 조각(es-vN, reg_eval_slide_chunks) 저장은 파일 형식이 3장에 확정돼 있으면 하고, 아니면 멈추고 질문.
+- 테스트 데이터는 테스트 안에서 만든 가짜 JSONL만 쓴다. `data/` 아래 실제 파일 · AI Hub 파일은 열지 않는다.
+
+**끝 기준**: `uv run ruff check .` · `uv run pytest` 통과, Python 3.9 문법, `test_routes.py`의 28개 경로 그대로, PROGRESS 단계 3에 체크와 메모.
 
 ## 끝난 작업: 검색 모듈(retrieval, rc-v1) — PR #5 · #6 머지
 - 같은 강의 안 벡터 20(gemini-embedding-2, 768) + Kiwi BM25 20 → RRF(k=60) 상위 20. 교안 slides-v4 규칙 청킹, 발화 30초 청킹.
@@ -50,12 +85,12 @@
 ## 질문 (답이 필요한 것)
 - `reg_datasets.status` 값 목록이 설계서(8.2.38 · 7.4.3)에 없다. 지금은 제약 없이 문자열. 예: READY / ARCHIVED 중 무엇을 쓸지 정하면 CHECK 추가.
 - 팀 합의: 레지스트리 DB SQLite, 판정 모델 강연 중에만 적재(백엔드가 강연 시작 · 종료를 알려야 함). `docs/work/design-changes.md` 참고.
-- 서버 관리자: 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용. (`/data` 없음 → `DATA_ROOT=/home/t26112/easyq-data`로 확정, design-changes 4번)
+- 서버 관리자(11/26 문의함, 답변 대기): 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용. (`/data` 없음 → `DATA_ROOT=/home/t26112/easyq-data`로 확정, design-changes 4번)
 
 ## 다음 할 일
-- Claude: 단계 1 · 2 끝(PR #7, 다음 PR). 단계 3 Codex 작업 설명 작성 → 단계 4 서버 올리기.
-- Codex: 단계 3(기본 API), 단계 1 끝난 뒤.
-- 사람(최의찬): rc-v1 zip 엄윤종에게 전달, 검증 480 검수, 설계 변경 팀 공유, 관리자 문의, 서비스용 Gemini 키 · 결제 주체 결정.
+- Claude: 단계 1 · 2 끝(PR #7 · #8). 단계 3 작업 설명 작성함. 단계 4 서버 올리기 안내 `docs/work/server-setup.md`.
+- Codex: 단계 3 시작 가능(3a 조회 API부터, 위 "단계 3 작업 설명").
+- 사람(최의찬): 끝 — rc-v1 zip 엄윤종 전달, slides-v4 코드 요청, 관리자 문의(답변 대기), 로컬 .env를 SQLite · ./data/local로, Gemini 키는 지금 키 · 본인 결제 하나로 개발 · 시연 모두 사용(실배포 없음, 11/26 결정), 설계 변경(design-changes.md) 팀 공유(11/26, 합의 답변 대기 — 특히 3번 강연 중 GPU 적재는 백엔드 호출 필요). 남음 — 검증 480 검수.
 
 ## 나중에 (Should, v1.0 이후)
 - 교안 멀티모달(rc-v2): 교안을 올릴 때 쪽 이미지를 비전 모델로 글로 바꿔(그림 설명 · 표 → 마크다운 · 수식 → LaTeX) 쪽 텍스트 뒤에 붙인다. 이후 검색 · 판정 · 답변은 그대로.
