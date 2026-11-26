@@ -34,7 +34,7 @@ EasyQ: 강연 중 청중 질문에 교안 · 발화 근거로 AI가 답하고, �
 - 판정 추론은 학습과 분리된 추론 프로세스가 fp16 서빙 모델을 GPU에 상주시켜 처리. 800 ms 넘으면 서비스가 LLM_ONLY로 대체.
 - 레지스트리 DB 테이블은 `reg_` 접두어. 학습 쪽 정보의 원본은 레지스트리 DB. **학과 서버에서는 SQLite 파일**(`{DATA_ROOT}/registry/registry.db`, DB 서버 미사용, 2026-11-26 결정). PostgreSQL 전용 기능을 쓰지 않아 `REGISTRY_DB_URL`만 바꾸면 RDS로 옮길 수 있게 한다. DB에 쓰는 건 학습서버 API 프로세스만.
 - **trainer · retrieval은 Python 3.9 문법으로 쓴다.** 학과 서버(ceprj, Rocky Linux)가 Python 3.9이고 가상환경을 쓸 수 없어서다(설계서 10.1의 3.12와 다름, 2026-11-26 결정). `X | None` 대신 `Optional[X]`, `zip(strict=)` · `match` 금지. 로컬 개발은 3.12, CI가 3.9에서도 검사한다. `scripts/data`는 로컬 전용이라 3.12 유지.
-- **데이터 · 체크포인트 · 모델 · 로그는 커밋 금지.** 학과 서버 `/data/easyq/`에만 둔다. AI Hub 데이터는 원본 · 재가공본 모두 학과 서버 밖으로 반출 금지, 외부 API로 보내지 않는다.
+- **데이터 · 체크포인트 · 모델 · 로그는 커밋 금지.** 학과 서버 `/home/t26112/easyq-data/`(`DATA_ROOT`)에만 둔다. AI Hub 데이터는 원본 · 재가공본 모두 학과 서버 밖으로 반출 금지, 외부 API로 보내지 않는다.
 
 ## 명령
 ```bash
