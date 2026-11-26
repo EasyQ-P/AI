@@ -46,3 +46,30 @@ def test_make_and_summary(tmp_path):
     s = summary(out)
     assert s["judged"] == 2 and s["overall"] == {"n": 2, "x": 1, "error_rate": 0.5}
     assert s["wrong"][0]["correct"] == "INSUFFICIENT_EVIDENCE"
+
+
+def test_add_hard_negatives_and_separate_summary(tmp_path):
+    from review_sample import add_hard_negatives
+
+    train = train_rows()
+    train += [row(f"ta{i}:hn1", "INSUFFICIENT_EVIDENCE", is_hard_negative=True) for i in range(8)]
+    train += [row(f"da{i}:hn1", "INSUFFICIENT_EVIDENCE", "DOCUMENT", is_hard_negative=True) for i in range(2)]
+    out = tmp_path / "rv"
+    make(train, [], 0.1, 1, out)
+    info = add_hard_negatives(train, 5, 1, out)
+    assert info["rows"] == 5 and info["by_evidence_type"] == {"TRANSCRIPT": 4, "DOCUMENT": 1}
+    with pytest.raises(ValueError):
+        add_hard_negatives(train, 5, 1, out)  # 두 번 덧붙이지 않음
+    path = out / "review.csv"
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert [r["no"] for r in rows] == [str(i) for i in range(1, 11)]
+    for r in rows:
+        r["판정(O/X)"] = "X" if r["pair_id"].endswith(":hn1") and r["evidence_type"] == "DOCUMENT" else "O"
+    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    s = summary(out)
+    assert s["overall"] == {"n": 5, "x": 0, "error_rate": 0.0}
+    assert s["hard_negatives"]["overall"] == {"n": 5, "x": 1, "error_rate": 0.2}
