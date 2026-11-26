@@ -111,3 +111,76 @@ def test_gemini_embedder_has_friendly_missing_sdk_error(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="embedding") as error:
         GeminiEmbedder()
     assert secret not in str(error.value)
+
+
+class _FakeModels:
+    def __init__(self, merge: bool) -> None:
+        self.merge = merge
+        self.calls = 0
+
+    def embed_content(self, model, contents, config):
+        from types import SimpleNamespace
+
+        self.calls += 1
+        count = 1 if self.merge else len(contents)
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=[float(i), 1.0]) for i in range(count)])
+
+
+def _fake_gemini(merge: bool, batch_size: int = 2) -> GeminiEmbedder:
+    from types import SimpleNamespace
+
+    embedder = GeminiEmbedder.__new__(GeminiEmbedder)
+    embedder.name, embedder.dim, embedder.batch_size, embedder.max_retries = "gemini-embedding-2", 2, batch_size, 0
+    embedder._types = SimpleNamespace(
+        Content=lambda parts: SimpleNamespace(parts=parts),
+        Part=lambda text: SimpleNamespace(text=text),
+        EmbedContentConfig=lambda **kwargs: kwargs,
+    )
+    embedder._client = SimpleNamespace(models=_FakeModels(merge))
+    return embedder
+
+
+def test_gemini_returns_one_vector_per_text_across_batches() -> None:
+    embedder = _fake_gemini(merge=False, batch_size=2)
+
+    vectors = embedder.embed(["a", "b", "c"], "document")
+
+    assert len(vectors) == 3
+    assert embedder._client.models.calls == 2
+
+
+def test_gemini_count_mismatch_raises() -> None:
+    embedder = _fake_gemini(merge=True)
+
+    with pytest.raises(RuntimeError, match="1 embeddings for 2 texts"):
+        embedder.embed(["a", "b"], "query")
+
+
+class _FailOnSecondCall(Embedder):
+    def __init__(self) -> None:
+        self.name, self.dim, self.calls = "flaky", 2, 0
+
+    def embed(self, texts, task):
+        self.calls += 1
+        if self.calls == 2:
+            raise RuntimeError("quota")
+        return [[1.0, 0.0] for _ in texts]
+
+
+def test_cached_embedder_keeps_finished_chunks_after_failure(tmp_path) -> None:
+    cache_path = tmp_path / "cache.jsonl"
+    embedder = CachedEmbedder(_FailOnSecondCall(), cache_path, flush_every=2)
+
+    with pytest.raises(RuntimeError, match="quota"):
+        embedder.embed(["a", "b", "c", "d"], "document")
+
+    assert len(cache_path.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_retry_delay_uses_server_hint_and_caps() -> None:
+    from retrieval.embedding import MAX_RETRY_WAIT, retry_delay_seconds
+
+    assert retry_delay_seconds(RuntimeError("Please retry in 36.15s."), 0) == pytest.approx(37.15)
+    assert retry_delay_seconds(RuntimeError("{'retryDelay': '20s'}"), 0) == pytest.approx(21.0)
+    assert retry_delay_seconds(RuntimeError("boom"), 3) == 8.0
+    assert retry_delay_seconds(RuntimeError("retry in 999s"), 0) == MAX_RETRY_WAIT
