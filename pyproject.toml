@@ -32,4 +32,5 @@ select = ["E", "F", "I", "UP", "B"]
 known-first-party = ["app", "modules", "retrieval"]
 
 [tool.pytest.ini_options]
-testpaths = ["retrieval/tests", "trainer/tests"]
+testpaths = ["retrieval/tests", "trainer/tests", "scripts/search/tests"]
+pythonpath = ["."]  # scripts.search.* import용
