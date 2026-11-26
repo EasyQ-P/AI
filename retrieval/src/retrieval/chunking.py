@@ -1,14 +1,15 @@
 """교안 청킹(R1) · 확정 발화 30초 청킹(R2) (6.1.5). 담당: 조현준(교안), 최의찬(발화)."""
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class Chunk:
     text: str
-    page_no: int | None = None      # 교안 조각
-    start_ms: int | None = None     # 발화 조각
-    end_ms: int | None = None
+    page_no: Optional[int] = None      # 교안 조각
+    start_ms: Optional[int] = None     # 발화 조각
+    end_ms: Optional[int] = None
 
 
 def chunk_slides(pages: list[str]) -> list[Chunk]:

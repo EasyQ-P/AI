@@ -9,7 +9,9 @@ def select_threshold(scores: list[float], labels: list[int], max_fpr: float = 0.
     점수가 τ와 같으면 답변으로 본다. 만족하는 값이 없으면 최고 점수 바로 위의 값을 돌려줘
     모든 질문을 이관한다(4.3). inf를 쓰지 않으므로 JSON · manifest에 그대로 넣을 수 있다.
     """
-    pairs = sorted(zip(scores, labels, strict=True), reverse=True)
+    if len(scores) != len(labels):  # 3.9에는 zip(strict=True)가 없다
+        raise ValueError("scores and labels must have the same length")
+    pairs = sorted(zip(scores, labels), reverse=True)
     negatives = sum(1 for _, y in pairs if y == 0)
     if negatives == 0:
         return min(scores)

@@ -2,7 +2,7 @@
 name = "easyq-trainer"
 version = "0.1.0"
 description = "EasyQ AI학습서버: 학습서버 API(/api/v1)와 데이터셋 · 학습 · 평가 · 변환 · 추론 · 장애 모듈 (7.4)"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
     "retrieval",
     "fastapi>=0.115",
@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 # 학과 서버(GPU)에서만 설치: uv sync --extra gpu
 gpu = [
-    "torch>=2.4",
+    "torch>=2.1",
     "transformers>=4.44",
     "sentence-transformers>=3.0",
     "safetensors>=0.4",

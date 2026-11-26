@@ -36,6 +36,23 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+  # 학과 서버 Python이 3.9라 trainer · retrieval을 3.9에서도 돌려 본다(3.9에서는 라이브러리가 예전 버전으로 깔린다).
+  # 데이터 스크립트(scripts/data)는 로컬 3.12에서만 돌리므로 여기서 빼고 경로를 직접 준다.
+  py39-test:
+    name: 빠른 검사 (Python 3.9, 학과 서버)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.9"
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install (GPU 패키지 제외)
+        run: uv sync --all-packages --group dev
+      - name: Pytest
+        run: uv run pytest -q retrieval/tests trainer/tests
+
   pip-audit:
     name: 의존성 취약점 (pip-audit)
     runs-on: ubuntu-latest
