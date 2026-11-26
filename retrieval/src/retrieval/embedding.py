@@ -93,15 +93,17 @@ class GeminiEmbedder(Embedder):
             batch = list(texts[start:start + self.batch_size])
             for attempt in range(self.max_retries + 1):
                 try:
+                    # 문자열 목록을 그대로 넘기면 gemini-embedding-2는 한 입력으로 합쳐 벡터 1개만 준다.
+                    # 텍스트마다 Content 하나로 감싸야 입력 수만큼 벡터가 나온다.
                     response = self._client.models.embed_content(
                         model=self.name,
-                        contents=batch,
+                        contents=[self._types.Content(parts=[self._types.Part(text=text)]) for text in batch],
                         config=self._types.EmbedContentConfig(
                             task_type=task_type,
                             output_dimensionality=self.dim,
                         ),
                     )
-                    vectors.extend([list(embedding.values) for embedding in response.embeddings])
+                    batch_vectors = [list(embedding.values) for embedding in response.embeddings]
                     break
                 except Exception as exc:
                     status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
@@ -113,6 +115,11 @@ class GeminiEmbedder(Embedder):
                     if not retryable or attempt >= self.max_retries:
                         raise
                     time.sleep(2**attempt)
+            if len(batch_vectors) != len(batch):
+                raise RuntimeError(
+                    f"Gemini returned {len(batch_vectors)} embeddings for {len(batch)} texts"
+                )
+            vectors.extend(batch_vectors)
         return vectors
 
 
