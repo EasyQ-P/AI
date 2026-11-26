@@ -8,6 +8,10 @@ dependencies = []
 [project.optional-dependencies]
 # 형태소 분석 키워드 색인 (Kiwi). 겹침 계산 · 설정만 쓸 때는 필요 없다.
 keyword = ["kiwipiepy>=0.18"]
+# Gemini 임베딩 (백엔드 · 로컬 데이터 작업). 학과 서버(Python 3.9)에는 설치하지 않는다.
+embedding = ["google-genai>=1.0; python_version >= '3.10'"]
+# 교안 청킹 토큰 수 (bge-reranker-v2-m3 토크나이저)
+tokenizer = ["tokenizers>=0.20"]
 
 [build-system]
 requires = ["hatchling"]
