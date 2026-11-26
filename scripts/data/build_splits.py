@@ -181,10 +181,41 @@ def evidence_by_label(rows: list[dict]) -> dict:
     return out
 
 
+def apply_review_fixes(train: list[dict], fixes: list[dict]) -> tuple[list[dict], dict]:
+    """사람 검수 결과(review_sample.py fixes)를 학습셋에 반영한다 (3.3.1 학습셋 10% 검수).
+
+    ok → label_source LLM_HUMAN, relabel → 라벨 · target 수정 + LLM_HUMAN, drop → 행 제외.
+    빠지는 쌍이 답변 가능이면 그 질문에 붙은 어려운 오답(<ID>:hnN)도 같이 뺀다(질문이 애매해서 뺀 것이므로).
+    """
+    by_id = {r["pair_id"]: r for r in train}
+    if missing := [f["pair_id"] for f in fixes if f["pair_id"] not in by_id]:
+        raise ValueError(f"검수 수정 대상이 학습셋에 없음 {len(missing)}개: {missing[:5]}")
+    drop = {f["pair_id"] for f in fixes if f["action"] == "drop"}
+    drop |= {r["pair_id"] for r in train if r.get("is_hard_negative") and r["pair_id"].rpartition(":hn")[0] in drop}
+    fix = {f["pair_id"]: f for f in fixes}
+    out, stats = [], Counter()
+    for r in train:
+        if r["pair_id"] in drop:
+            stats["dropped"] += 1
+            continue
+        f = fix.get(r["pair_id"])
+        if f:
+            if f["action"] not in ("ok", "relabel"):
+                raise ValueError(f"알 수 없는 action: {f}")
+            r = {**r, "label_source": "LLM_HUMAN"}
+            if f["action"] == "relabel":
+                r.update(label=f["label"], target=int(f["label"] == "ANSWERABLE"))
+                stats["relabeled"] += 1
+            else:
+                stats["confirmed"] += 1
+        out.append(r)
+    return out, dict(stats)
+
+
 def build(
     ocw: list[dict], squad: list[dict], val: list[dict], ocw_counts: dict | None, seed: int,
     aihub: list[dict] | None = None, hard_negatives: list[dict] | None = None, hn_max: int = 2,
-    hn_checked: dict[str, bool] | None = None,
+    hn_checked: dict[str, bool] | None = None, review_fixes: list[dict] | None = None,
 ):
     aihub = aihub or []
     check_aihub(ocw, squad, val, aihub)
@@ -193,6 +224,9 @@ def build(
     hn_rows, hn_stats = attach_hard_negatives(ocw, hard_negatives, hn_max, hn_checked) if hard_negatives else (
         [], None)
     train = [to_train(p) for p in ocw + hn_rows + squad + aihub]
+    review_stats = None
+    if review_fixes:
+        train, review_stats = apply_review_fixes(train, review_fixes)
     validation = [to_eval(p) for p in val]
     tc = {r["course_id"] for r in train} - {None}
     vc = {r["course_id"] for r in validation}
@@ -210,6 +244,8 @@ def build(
                                        sorted(Counter((r["evidence_type"], r["label"]) for r in train).items())},
             "by_course": dict(Counter(str(r["course_id"]) for r in train)),
             "hard_negatives": hn_stats,
+            "review_fixes": review_stats,
+            "by_label_source": dict(Counter(r["label_source"] for r in train)),
             "ocw_evidence_by_label": evidence_by_label([r for r in train if r["source"] == "MIT_OCW"]),
         },
         "validation": {
@@ -238,6 +274,8 @@ def main() -> None:
     ap.add_argument("--hn-max", type=int, default=2, help="질문당 어려운 오답 최대 개수(설계 기본 2)")
     ap.add_argument("--hn-recheck", type=Path, nargs="*", default=None,
                     help="recheck_batch.py의 result.jsonl(여러 개 가능). 통과한(answerable=false) 오답만 쓴다")
+    ap.add_argument("--review-fixes", type=Path, default=None,
+                    help="review_sample.py fixes의 fixes.jsonl. 사람 검수 결과(확인 · 라벨 수정 · 제외)를 반영")
     args = ap.parse_args()
 
     hard_negatives = [p for f in args.hard_negatives for p in read_jsonl(f)] if args.hard_negatives else None
@@ -247,6 +285,7 @@ def main() -> None:
         [p for f in args.ocw for p in read_jsonl(f)], read_jsonl(args.squad), read_jsonl(args.val),
         args.ocw_counts, args.seed, read_jsonl(args.aihub) if args.aihub else None,
         hard_negatives, args.hn_max, hn_checked,
+        read_jsonl(args.review_fixes) if args.review_fixes else None,
     )
     out = args.out_root / args.name
     out.mkdir(parents=True, exist_ok=True)
@@ -258,7 +297,8 @@ def main() -> None:
         "inputs": {"ocw": [str(f) for f in args.ocw],"squad": str(args.squad), "val": str(args.val),
                    "aihub": str(args.aihub) if args.aihub else None,
                    "hard_negatives": [str(f) for f in args.hard_negatives] if args.hard_negatives else None,
-                   "hn_recheck": [str(f) for f in args.hn_recheck] if args.hn_recheck else None},
+                   "hn_recheck": [str(f) for f in args.hn_recheck] if args.hn_recheck else None,
+                   "review_fixes": str(args.review_fixes) if args.review_fixes else None},
         "ocw_counts": args.ocw_counts,
         "hn_max": args.hn_max if args.hard_negatives else None,
         "seed": args.seed,

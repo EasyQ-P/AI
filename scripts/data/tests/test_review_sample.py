@@ -73,3 +73,59 @@ def test_add_hard_negatives_and_separate_summary(tmp_path):
     s = summary(out)
     assert s["overall"] == {"n": 5, "x": 0, "error_rate": 0.0}
     assert s["hard_negatives"]["overall"] == {"n": 5, "x": 1, "error_rate": 0.2}
+
+
+def test_xlsx_roundtrip_summary(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    from review_sample import to_xlsx
+
+    train = train_rows() + [row("da0:hn1", "INSUFFICIENT_EVIDENCE", "DOCUMENT", is_hard_negative=True)]
+    out = tmp_path / "rv"
+    make(train, [], 0.1, 1, out)
+    from review_sample import add_hard_negatives
+    add_hard_negatives(train, 1, 1, out)
+    path = to_xlsx(out, {"da0:hn1": "번역문"})
+    with pytest.raises(ValueError):
+        to_xlsx(out, {})  # 채운 엑셀 덮어쓰기 방지
+    wb = openpyxl.load_workbook(path)
+    ws = wb["검수"]
+    head = [c.value for c in ws[1]]
+    assert ws.max_row == 7 and "근거(참고 번역)" in head and wb.sheetnames == ["안내", "검수"]
+    j, t, p = head.index("판정(O/X)") + 1, head.index("근거(참고 번역)") + 1, head.index("pair_id") + 1
+    for r in range(2, ws.max_row + 1):
+        hn = ws.cell(row=r, column=p).value == "da0:hn1"
+        ws.cell(row=r, column=j, value="X" if hn else "O")
+        if hn:
+            assert ws.cell(row=r, column=t).value == "번역문"
+    wb.save(path)
+    s = summary(out)
+    assert s["overall"] == {"n": 5, "x": 0, "error_rate": 0.0}
+    assert s["hard_negatives"]["overall"] == {"n": 1, "x": 1, "error_rate": 1.0}
+
+
+def test_fixes_actions_and_errors(tmp_path):
+    from review_sample import fixes
+
+    out = tmp_path / "rv"
+    make(train_rows(), [], 0.1, 1, out)
+    path = out / "review.csv"
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    rows[0]["판정(O/X)"] = "O"
+    rows[1]["판정(O/X)"], rows[1]["맞는 라벨"] = "X", "제외"
+    rows[2]["판정(O/X)"], rows[2]["맞는 라벨"] = "X", "INSUFFICIENT_EVIDENCE"
+
+    def save():
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+
+    save()
+    got = fixes(out)
+    assert [f["action"] for f in got] == ["ok", "drop", "relabel"]
+    assert got[2]["label"] == "INSUFFICIENT_EVIDENCE"
+    rows[3]["판정(O/X)"] = "X"  # 맞는 라벨 없음
+    save()
+    with pytest.raises(ValueError):
+        fixes(out)

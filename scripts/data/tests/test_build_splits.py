@@ -102,3 +102,22 @@ def test_build_with_hard_negatives_meta():
     assert meta["train"]["hard_negatives"]["rechecked"] is False
     lab = meta["train"]["ocw_evidence_by_label"]
     assert lab["ANSWERABLE"]["document_ratio"] == 0.5 and lab["INSUFFICIENT_EVIDENCE"]["document_ratio"] == 0.5
+
+
+def test_apply_review_fixes():
+    from build_splits import apply_review_fixes
+
+    train = [pair("a1", "ANSWERABLE"), pair("a2", "ANSWERABLE"), pair("i1", "INSUFFICIENT_EVIDENCE"),
+             pair("o1", "OPINION"), hn("a2", 1), hn("a1", 1)]
+    fixes = [{"pair_id": "a1", "action": "relabel", "label": "INSUFFICIENT_EVIDENCE"},
+             {"pair_id": "a2", "action": "drop", "label": None},
+             {"pair_id": "i1", "action": "ok", "label": "INSUFFICIENT_EVIDENCE"}]
+    out, stats = apply_review_fixes(train, fixes)
+    by = {r["pair_id"]: r for r in out}
+    assert set(by) == {"a1", "i1", "o1", "a1:hn1"}  # a2와 그 어려운 오답은 빠짐
+    assert by["a1"]["label"] == "INSUFFICIENT_EVIDENCE" and by["a1"]["target"] == 0
+    assert by["a1"]["label_source"] == by["i1"]["label_source"] == "LLM_HUMAN"
+    assert by["o1"]["label_source"] is None  # 검수 안 한 행은 그대로
+    assert stats == {"relabeled": 1, "dropped": 2, "confirmed": 1}
+    with pytest.raises(ValueError):
+        apply_review_fixes(train, [{"pair_id": "zzz", "action": "ok", "label": "OPINION"}])
