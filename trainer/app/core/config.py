@@ -16,13 +16,17 @@ class Settings(BaseSettings):
     # 비우면 {data_root}/registry/registry.db SQLite 파일(학과 서버 규칙상 DB 서버를 띄우지 않는다).
     # PostgreSQL · RDS로 옮길 때는 이 값만 바꾼다. 예: postgresql+psycopg://user:pw@host:5432/easyq_registry
     registry_db_url: str = ""
-    data_root: Path = Path("/data/easyq")
+    data_root: Path = Path("/home/t26112/easyq-data")  # 학과 서버(/data 없음, design-changes 4번)
     trainer_host: str = "127.0.0.1"
     trainer_port: int = 8000
     # 판정 추론 프로세스 (학습과 분리, 내부 전용)
     inference_host: str = "127.0.0.1"
     inference_port: int = 8001
     judge_timeout_ms: int = 800
+    # 학과 서버 가이드: GPU는 정해진 한 장만 쓴다. 학습 · 평가 · 변환 작업 프로세스에 CUDA_VISIBLE_DEVICES로 넘긴다.
+    gpu_device: str = "0"
+    # 작업 프로세스가 남긴 상태 파일을 레지스트리에 옮기는 주기(초)
+    job_poll_seconds: float = 2.0
 
     @property
     def registry_url(self) -> str:
