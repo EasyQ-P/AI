@@ -185,6 +185,23 @@ def test_invalid_report_value_does_not_block_sync(factory, tmp_path):
     assert job.stage is None
 
 
+def test_non_object_status_file_fails_only_that_job(factory, tmp_path):
+    """status.json이 객체가 아니어도(문자열 등) 그 작업만 실패 처리하고 다른 작업 동기화는 계속된다."""
+    runner = make_runner(factory, tmp_path, alive=lambda pid: False)
+    with runner.session_factory() as session:
+        session.add(RegJob(job_id="train-0001", type="train", status="RUNNING"))
+        session.add(RegJob(job_id="eval-0001", type="eval", status="RUNNING"))
+        session.commit()
+    for job_id, status in (("train-0001", '"RUNNING"'), ("eval-0001", json.dumps({"status": "SUCCEEDED"}))):
+        job_dir = tmp_path / "jobs" / job_id
+        job_dir.mkdir(parents=True)
+        (job_dir / "status.json").write_text(status, encoding="utf-8")
+    runner.poll()
+    with runner.session_factory() as session:
+        assert session.get(RegJob, "train-0001").status == "FAILED"
+        assert session.get(RegJob, "eval-0001").status == "SUCCEEDED"
+
+
 class TestRestart:
     """API를 다시 켰을 때(이전 프로세스가 띄운 작업)."""
 

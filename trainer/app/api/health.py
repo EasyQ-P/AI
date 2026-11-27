@@ -31,9 +31,12 @@ def health(session: Annotated[Session, Depends(get_session)]) -> dict:
 
     loaded = serving_state().loaded
     return ok({
-        "status": "degraded" if mode == "CUSTOM" and not loaded else "ok",
+        # 임대 방식(design-changes 3번)에서는 강연이 없을 때 미적재가 정상이라 status에 반영하지 않는다.
+        # 적재 여부는 model_loaded로만 알린다.
+        "status": "ok",
         "mode": mode,
         "serving_version": serving_version,
         "threshold": threshold,
         "gpu_busy": get_runner().gpu_job(session) is not None,
+        "model_loaded": loaded,  # 백엔드 v1.4 R2: 판정 모델이 GPU에 올라가 있는지(임대 방식, design-changes 3번)
     })

@@ -17,6 +17,6 @@
 - 버전: ds-vN, val-vN, test-vN, rc-vN, es-vN, judge-vN / 작업 번호: train-0001, eval-0001, export-0001
 
 ## 커밋하면 안 되는 것
-- 학습 데이터 · 체크포인트 · 모델 · 평가 리포트 · 로그 (학과 서버 `/data/easyq/`에만 둔다)
+- 학습 데이터 · 체크포인트 · 모델 · 평가 리포트 · 로그 (학과 서버 `/home/t26112/easyq-data/`(`DATA_ROOT`)에만 둔다)
 - AI Hub 데이터: 원본 · 재가공본 모두 학과 서버 밖으로 옮기지 않는다 (3.1.3)
 - `.env`, API 키, SSH 키

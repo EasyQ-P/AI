@@ -25,11 +25,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         runner.stop()  # 동기화만 멈춘다. 작업 프로세스는 그대로 돈다
 
 
+_docs = get_settings().docs_enabled  # prod에서는 설명서를 끈다(설명서는 X-API-Key 보호 밖이라서)
 app = FastAPI(
     title="EasyQ 학습서버",
     version="0.1.0",
-    docs_url="/api/v1/docs",
-    openapi_url="/api/v1/openapi.json",
+    docs_url="/api/v1/docs" if _docs else None,
+    redoc_url=None,
+    openapi_url="/api/v1/openapi.json" if _docs else None,
     lifespan=lifespan,
 )
 register_error_handlers(app)

@@ -198,3 +198,21 @@ def test_scripts_reject_ai_hub_rows(tmp_path, monkeypatch, builder, dataset_name
     with pytest.raises(RuntimeError, match="AI Hub data is not allowed"):
         builder(pack, "rejected", "fake")
     assert not (tmp_path / "data/interim/search/rejected").exists()
+
+
+@pytest.mark.parametrize("row,blocked", [
+    ({"question_text": "q"}, False),                       # 필드 없음(검증 · 시험셋 · 교안 조각)
+    ({"contains_aihub": False}, False),
+    ({"contains_aihub": "false"}, False),
+    ({"contains_aihub": True}, True),
+    ({"contains_aihub": 1}, True),
+    ({"contains_aihub": "true"}, True),
+    ({"contains_aihub": "yes"}, True),                     # 모르는 값은 막는다
+    ({"source": "AIHUB"}, True),
+    ({"source": "aihub", "contains_aihub": False}, True),
+    (["not", "a", "dict"], True),
+])
+def test_is_aihub_row_blocks_every_truthy_form(row, blocked) -> None:
+    from scripts.search.common import is_aihub_row
+
+    assert is_aihub_row(row) is blocked
