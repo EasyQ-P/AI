@@ -48,13 +48,19 @@ class HybridSearcher:
         self.keyword = build_keyword_index({d.doc_id: d.text for d in docs}, config)
         ids = [d.doc_id for d in docs]
         vectors = embedder.embed([d.text for d in docs], "document") if docs else []
+        if len(vectors) != len(ids):  # 개수가 다르면 zip이 조용히 잘라 검색 중 KeyError가 난다
+            raise ValueError(f"embedder returned {len(vectors)} vectors for {len(ids)} docs")
         self.vectors = dict(zip(ids, vectors))
 
     def search_many(self, queries: Sequence[tuple[str, str]], top_n: Optional[int] = None) -> list[list[str]]:
         """(질문, lecture_id) 목록 → 질문마다 후보 근거 ID(RRF 순위). 질문 임베딩은 한 번에 부른다."""
         cfg = self.config
-        n = top_n or cfg.candidates
+        n = cfg.candidates if top_n is None else top_n
+        if n < 0:
+            raise ValueError("top_n must be >= 0")
         qvecs = self.embedder.embed([q for q, _ in queries], "query") if queries else []
+        if len(qvecs) != len(queries):  # 개수가 다르면 마지막 질문의 결과가 조용히 빠진다
+            raise ValueError(f"embedder returned {len(qvecs)} vectors for {len(queries)} queries")
         results: list[list[str]] = []
         for (question, lecture_id), qvec in zip(queries, qvecs):
             allowed = self._by_lecture.get(lecture_id, set())

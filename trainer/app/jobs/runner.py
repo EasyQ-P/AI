@@ -159,7 +159,8 @@ class JobRunner:
 
         final = status.get("status") if status else None
         if final in FINAL_STATUSES:
-            self._finish(session, job, final, status.get("error"))
+            error = status.get("error")
+            self._finish(session, job, final, error if isinstance(error, str) else None)
         else:
             self._finish(session, job, "FAILED", "job process ended without a result")
 
@@ -239,9 +240,11 @@ class JobRunner:
     @staticmethod
     def _read_status(job_dir: Path) -> dict:
         try:
-            return json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+            status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
+        # 객체가 아니면(문자열 · 배열) 결과 없음으로 본다. 그대로 두면 .get()에서 예외가 나 다른 작업 동기화까지 막힌다
+        return status if isinstance(status, dict) else {}
 
     @staticmethod
     def _next_job_id(session: Session, job_type: str) -> str:

@@ -20,10 +20,26 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             row = json.loads(line)
-            if row.get("contains_aihub") is True:
+            if is_aihub_row(row):
                 raise RuntimeError(f"AI Hub data is not allowed: {path}:{line_number}")
             rows.append(row)
     return rows
+
+
+def is_aihub_row(row: Any) -> bool:
+    """AI Hub 행인지 판단한다(외부 임베딩 API로 보내기 전 차단용, 설계서 3.1.3).
+
+    `contains_aihub`가 없는 행은 통과시킨다. 검증 · 시험셋과 교안 조각 파일에는 이 필드가 원래 없다(3.3.3).
+    값이 있으면 True뿐 아니라 1 · "true" 같은 표기도 AI Hub로 본다. `source == "AIHUB"`도 막는다.
+    행이 객체가 아니면 내용을 알 수 없으므로 막는다.
+    """
+    if not isinstance(row, dict):
+        return True
+    flag = row.get("contains_aihub")
+    if flag is not None and flag is not False:
+        if not (isinstance(flag, (int, str)) and str(flag).strip().lower() in ("0", "false", "")):
+            return True
+    return str(row.get("source", "")).strip().upper() == "AIHUB"
 
 
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
