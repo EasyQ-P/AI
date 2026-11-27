@@ -36,8 +36,10 @@ HTTP_STATUS = {
     Code.REGISTER_HELD: 409,
 }
 
-# 요청 형식 오류(422)를 어떤 코드로 돌려줄지: 학습 파라미터를 받는 API는 603, 그 밖은 601 (8.4.3)
-PARAM_PATH_PREFIXES = ("/api/v1/train-configs", "/api/v1/train-jobs")
+# 요청 형식 오류(422)를 어떤 코드로 돌려줄지 (8.4.3, design-changes 6번)
+# 601(데이터셋 검증 오류 → 서비스 DATASET_NOT_READY)은 데이터셋 등록 · 라벨 병합 본문에만 쓴다.
+# 그 밖의 입력 오류(조회 조건 · 쪽 번호 · 학습 파라미터 등)는 603(→ 서비스 VALIDATION_ERROR).
+DATASET_BODY_PREFIX = "/api/v1/datasets"
 
 
 class TrainerError(Exception):
@@ -66,8 +68,10 @@ def _body(code: Code, msg: str, data: object = None) -> dict:
     return {"result_code": int(code), "result_msg": msg, "data": data}
 
 
-def validation_code(path: str) -> Code:
-    return Code.PARAM_OUT_OF_RANGE if path.startswith(PARAM_PATH_PREFIXES) else Code.DATASET_INVALID
+def validation_code(method: str, path: str) -> Code:
+    if method == "POST" and path.startswith(DATASET_BODY_PREFIX):
+        return Code.DATASET_INVALID
+    return Code.PARAM_OUT_OF_RANGE
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -81,7 +85,7 @@ def register_error_handlers(app: FastAPI) -> None:
     async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
         # 입력값(input)은 원문이 섞일 수 있어 돌려주지 않고 위치 · 사유만 남긴다
         errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", "")} for e in exc.errors()]
-        code = validation_code(request.url.path)
+        code = validation_code(request.method, request.url.path)
         return JSONResponse(status_code=400, content=_body(code, "invalid request", errors))
 
     @app.exception_handler(StarletteHTTPException)

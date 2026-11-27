@@ -103,12 +103,11 @@ echo $! > /home/t26112/easyq-data/api.pid
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/health    # 401
 ```
 
-키를 넣은 확인(키는 파일에서 읽어 변수로만 쓴다):
+키를 넣은 확인. 키를 `curl` 명령줄에 붙이지 않는다. 공용 계정이라 실행 중인 명령줄은 같은 계정의 다른 프로세스가 `ps`로 볼 수 있기 때문이다. `printf`는 셸 내장 명령이라 명령줄에 남지 않고, `curl -H @-`가 헤더를 표준 입력에서 읽는다.
 
 ```bash
-KEY=$(grep '^TRAINER_API_KEY=' .env | cut -d= -f2-)
-curl -s -H "X-API-Key: $KEY" http://127.0.0.1:8000/api/v1/health; echo
-unset KEY
+grep '^TRAINER_API_KEY=' .env | cut -d= -f2- | { read -r KEY; printf 'X-API-Key: %s\n' "$KEY"; } \
+  | curl -s -H @- http://127.0.0.1:8000/api/v1/health; echo
 # {"result_code":200,...,"data":{"status":"ok","mode":"LLM_ONLY","serving_version":null,"threshold":null,"gpu_busy":false,"model_loaded":false}}
 ```
 

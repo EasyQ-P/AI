@@ -2,13 +2,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PLACEHOLDER_API_KEY = "change-me"
+# 레포 루트(trainer/app/core/config.py 기준 세 단계 위). 작업 프로세스는 trainer/에서 돌기 때문에
+# .env와 상대 경로를 현재 폴더가 아니라 이 위치 기준으로 읽는다.
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(REPO_ROOT / ".env"), extra="ignore")
 
     # dev: 로컬 개발(기본 키 허용) / prod: 학과 서버(키가 없거나 기본값이면 시작 거부)
     trainer_env: Literal["dev", "prod"] = "prod"
@@ -27,6 +31,17 @@ class Settings(BaseSettings):
     gpu_device: str = "0"
     # 작업 프로세스가 남긴 상태 파일을 레지스트리에 옮기는 주기(초)
     job_poll_seconds: float = 2.0
+
+    @field_validator("data_root")
+    @classmethod
+    def _absolute_data_root(cls, value: Path) -> Path:
+        """상대 경로(로컬 ./data/local 등)는 레포 루트 기준으로 바꾼다. API와 작업 프로세스가 같은 폴더를 보게 한다."""
+        return value if value.is_absolute() else (REPO_ROOT / value).resolve()
+
+    @property
+    def docs_enabled(self) -> bool:
+        """API 설명서(/api/v1/docs · openapi.json)는 개발 모드에서만 연다. 학과 서버(prod)에서는 끈다."""
+        return self.trainer_env == "dev"
 
     @property
     def registry_url(self) -> str:

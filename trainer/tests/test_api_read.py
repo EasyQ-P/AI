@@ -159,11 +159,11 @@ def test_jobs_support_filters_pagination_detail_and_time_format(api):
 
 
 @pytest.mark.parametrize("params", [{"type": "deploy"}, {"status": "DONE"}])
-def test_invalid_job_filter_is_601(api, params):
+def test_invalid_job_filter_is_603(api, params):
     client, _ = api
     response = client.get("/api/v1/jobs", params=params, headers=KEY)
     assert response.status_code == 400
-    assert response.json()["result_code"] == 601
+    assert response.json()["result_code"] == 603
 
 
 def test_fault_filters_pagination_and_time_format(api):
@@ -279,8 +279,8 @@ def test_health_uses_latest_deployment_loaded_state_and_gpu_job(api, monkeypatch
     "/api/v1/jobs?size=101",
     "/api/v1/faults?from=2026-11-26T10:00:00",
 ])
-def test_invalid_list_query_is_601(api, path):
+def test_invalid_list_query_is_603(api, path):
     client, _ = api
     response = client.get(path, headers=KEY)
     assert response.status_code == 400
-    assert response.json()["result_code"] == 601
+    assert response.json()["result_code"] == 603
