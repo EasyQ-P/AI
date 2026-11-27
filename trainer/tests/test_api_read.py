@@ -261,7 +261,7 @@ def test_health_uses_latest_deployment_loaded_state_and_gpu_job(api, monkeypatch
     monkeypatch.setattr(health_api, "serving_state", lambda: ServingState(loaded=False))
     data = client.get("/api/v1/health", headers=KEY).json()["data"]
     assert data == {
-        "status": "degraded",
+        "status": "ok",
         "mode": "CUSTOM",
         "serving_version": "judge-v1",
         "threshold": 0.62,
