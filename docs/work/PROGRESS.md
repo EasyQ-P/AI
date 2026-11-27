@@ -28,7 +28,7 @@
   - `trainer/app/db/models.py`(JSON은 PG에서만 JSONB, 상태는 CHECK, 시각은 UTC aware), 마이그레이션 `20261126_4d5f3a7aaa3d`(upgrade · check · downgrade 확인), 테스트 `trainer/tests/test_registry_db.py`
   - 기본 주소: `REGISTRY_DB_URL`이 비면 `{DATA_ROOT}/registry/registry.db`. SQLite는 접속마다 foreign_keys · WAL · busy_timeout
   - 주의: 테이블 간 relationship을 두지 않아 한 세션에서 부모 · 자식을 같이 넣을 때는 부모를 먼저 flush
-- [x] 2. 작업 실행기: 202 + job_id, GPU 잠금(609), 중단, 재시작 후 정리, 자기 프로세스만 관리 (Claude, 브랜치 `feature/job-runner`, #7 위에 쌓음)
+- [x] 2. 작업 실행기(runner 자체): 202 + job_id, GPU 잠금(609), 중단, 재시작 후 정리, 자기 프로세스만 관리. **API 연결은 미완료** — 장시간 작업 POST(7.4.6~ 등)는 아직 600 뼈대, 핸들러는 단계 6에서 넣는다 (Claude, 브랜치 `feature/job-runner`, #7 위에 쌓음)
   - `app/jobs/runner.py` `JobRunner.submit/cancel/poll/start/stop`, 모듈 함수 `submit_job` · `cancel_job` · `start` · `stop`(main.py lifespan에서 시작 · 종료)
   - 작업마다 자식 프로세스 `python -m app.jobs.worker <job_dir> <모듈:함수>`. 핸들러는 `JobContext`를 받아 `check_cancel()` · `report(...)`, 보류는 `raise JobHeld("below_target")`
   - 파일: `{DATA_ROOT}/jobs/{job_id}/` payload.json · status.json · cancel · pid · worker.log. DB 반영은 API의 poll(기본 2초)만
@@ -50,13 +50,27 @@
   - 시험 설정: `conftest.py`가 `DATA_ROOT`를 임시 폴더로 바꾸고 `api` fixture(임시 SQLite + 마이그레이션)를 둔다. API 시험은 이 fixture를 쓴다(실제 레지스트리를 건드리지 않게)
   - Codex 실행 메모: Codex는 git 기록을 쓸 수 없다 → Claude가 `dev`에서 worktree(`.claude/worktrees/<이름>`)를 만들고 Codex는 파일만 고친다. 커밋은 Claude가 리뷰 후
   - [ ] 3b 데이터셋 등록(7.4.2)
+    - Codex 검토(11/27)에서 나온 것, 3b 전에 정할 것:
+      - C4 평가용 교안 필드 불일치: 엄윤종 `eval_reference_chunks.jsonl`(lecture_id · source_key · page_no · chunk_index · text) ↔ DB `reg_eval_slide_chunks`(chunk_key · course_id · page_no · text). `course_id` 만드는 규칙 · `source_key → chunk_key` 대응을 엄윤종과 정하기
+      - C5 파일 · DB 원자성: 임시 폴더에 복사 → DB 성공 뒤 이름 바꾸기, 실패 시 정리. `upload/` 밖(심볼릭 링크 포함, `resolve()` 후 검사) 거부
+      - C6 `reg_datasets.status` 값 목록(질문 1번) 정하고 CHECK
 - [ ] 4. 학과 서버 1차 올리기: `docs/work/server-setup.md`(`pip --target`, API 실행, SSH 터널 확인) (최의찬 + Claude, 바로 시작 가능)
 - [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 적재 임대(lease) 방식, 800 ms 측정 (Claude, 4 · 관리자 · 팀 답변 후)
   - 백엔드 v1.4 요청(11/27 수락, design-changes 3번): R1 `POST /judge-model/keepalive` → `{loaded, loading, expires_at}`(워커가 LIVE 강의가 있는 동안 1분마다, 마지막 요청 5분 뒤 해제, GPU 작업 중이면 609) · R2 `/health`에 `model_loaded`(**11/27 반영**, `status`는 미적재여도 `ok`) · R3 7.4.26은 적재 안 됐으면 바로 611
+  - Codex 검토(11/27): A1 `/health`의 `model_loaded`는 지금 API 프로세스(8000) 자기 메모리를 본다 → 8001에 짧은 제한 시간으로 물어보는 방식으로 바꾸기 · C1 학습 작업과 판정 모델이 같은 GPU를 쓰지 않도록 8000 · 8001 공용 잠금(파일 잠금) + 강연 중 학습 요청 우선순위 정하기 · C3 keepalive API 추가 시 `test_routes.py` "28개" 갱신
   - 5-1. LLM_ONLY 판정 프롬프트 `llm-only-v1` 확정: 서비스 대체 판정과 베이스라인 ③이 같은 프롬프트(τ_LLM). 원본 위치 제안 `retrieval` 패키지 (Claude + 팀)
 - [ ] 6. 학습 한 바퀴: 학습 → 평가 → fp16 변환 → 등록 → 서빙 전환 · 롤백 (Claude, 테스트 Codex) — **엄윤종 최종 데이터셋** · 3b · 5 · 5-1 필요
+  - Codex 검토(11/27)에서 나온 것:
+    - A5 자동 파이프라인의 변환 · 평가 단계 실패도 606으로 기록됨 → worker가 실패 단계를 보고, runner가 604 · 606 · 607 고르기
+    - A6 fault_id가 `count + 1`이라 동시 기록 시 겹칠 수 있음, DB 커밋 뒤 파일 쓰기 실패 시 불일치 → 충돌 재시도 · 호출자가 트랜잭션 관리
+    - C2 작업 결과를 reg_models · reg_evaluations · reg_deployments · reg_test_sets에 반영할 API 쪽 마무리 처리(멱등) 만들기
+    - A10 평가 표본이 비면 임계값 계산 예외 → 검증 후 607
+    - A4(보안) 예외 메시지 · traceback에 질문 · 근거 · AI Hub 내용이 남지 않게: 핸들러는 정해진 메시지만, 로그 값 가리기
+    - A3 작업 띄운 직후 pid 쓰기 전에 API가 죽으면 GPU 작업 두 개 가능(드묾) → C1 파일 잠금으로 함께 해결
+    - C10 취소 응답 계약(7.4.9 CANCELLED까지 기다림 vs 접수만) 정하기
 - [ ] 7. 백엔드 연동: EC2 → SSH 터널 → 판정 호출, 시간 초과 대체 (최의찬 + 조현준 + Claude) — 6 · 조현준 합의 필요
 - 나중(Should, v1.0 이후): 교안 멀티모달 rc-v2 (아래 "나중에")
+- 알려진 사소한 문제(고치지 않음): D1 같은 생성 시각끼리 버전 문자열 정렬(`ds-v10` < `ds-v9`) — 시각이 같을 일이 사실상 없고 고치려면 마이그레이션 필요
 
 ```
 지금 동시에: A · 3a · 4
@@ -87,12 +101,12 @@ A-3 검수(엄윤종) → 엄윤종 최종 데이터셋 ┐
 **공통**
 - 시각은 ISO 8601 **+09:00**로 내보낸다(DB는 UTC). `app/core/timefmt.py`에 `to_kst_iso(dt) -> Optional[str]` 하나 만들어 모든 API가 쓴다.
 - 목록 API의 `page` · `size`: 설계서에 기본값이 없어 **page=1부터, size 기본 20 · 최대 100**으로 한다. 응답에 `total_count`.
-- 없는 항목은 613. 목록 필터 값이 허용 목록 밖이면 422 → 기존 핸들러가 601로 바꾼다(손대지 않음).
+- 없는 항목은 613. 목록 필터 · 쪽 번호 등 입력 오류는 603(11/27 변경, design-changes 6번). 601은 데이터셋 등록 · 병합 본문만.
 
 **3a. 조회 API (먼저, 작은 PR 하나)**
 | API | 구현 |
 |---|---|
-| 7.4.1 GET /health | `mode` · `serving_version` · `threshold`: reg_deployments에서 `deployment_seq` 가장 큰 행. 행이 없으면 LLM_ONLY · null · null. `gpu_busy`: `gpu_job(session) is not None`. `status`: 판정 모델 적재 여부는 5단계에서 붙으므로 지금은 `modules.inference.serving_state().loaded`를 그대로 쓰고, CUSTOM인데 미적재면 degraded. worker가 10초마다 부르므로 DB가 비어 있어도 200이어야 한다 |
+| 7.4.1 GET /health | `mode` · `serving_version` · `threshold`: reg_deployments에서 `deployment_seq` 가장 큰 행. 행이 없으면 LLM_ONLY · null · null. `gpu_busy`: `gpu_job(session) is not None`. `status`: 항상 `ok`, 적재 여부는 `model_loaded`(11/27, design-changes 3번. 지금은 `serving_state().loaded`, 5단계에서 8001에 묻도록 바꿈). worker가 10초마다 부르므로 DB가 비어 있어도 200이어야 한다 |
 | 7.4.3 GET /datasets | reg_datasets 최신순(created_at desc). 항목 필드는 7.4.3 그대로, `test_use_count`는 reg_test_sets에서 |
 | 7.4.4 GET /datasets/{v} | 7.4.4 필드 그대로. 없으면 613 |
 | 7.4.24 GET /jobs | `type` · `status` 필터(값은 `JOB_TYPES` · `JOB_STATUSES`), 최신순. 항목: job_id · type · status · progress · created_at · finished_at |
@@ -120,13 +134,14 @@ A-3 검수(엄윤종) → 엄윤종 최종 데이터셋 ┐
 - `reg_datasets.status` 값 목록이 설계서(8.2.38 · 7.4.3)에 없다. 지금은 제약 없이 문자열. 예: READY / ARCHIVED 중 무엇을 쓸지 정하면 CHECK 추가.
 - 팀 합의: 레지스트리 DB SQLite, 판정 모델 적재는 임대 방식(백엔드 v1.4 제안 수락, 워커가 1분마다 keepalive). `docs/work/design-changes.md` 참고.
 - 백엔드 Q8 키워드 색인: 백엔드가 PostgreSQL `tsvector`를 쓰면 rc-v1(Kiwi BM25)과 검색 결과가 달라 rc-v1이라 기록하면 안 된다. 백엔드가 `retrieval` 패키지의 Kiwi BM25를 쓰도록 제안 → 팀 합의 필요.
-- PR #12 AI Hub 다운로드 · 가공 위치(본인 PC → 결과만 서버로, PC 사본 삭제): 최종 보관 · 학습은 서버라 반출은 아니고, 설계 3.1.3 "서버에만 둔다"와만 다르다. design-changes 5번에 기록 → 엄윤종에게 이유 확인 · 결정 기록 문서(`docs/notes/AIHub_다운로드_정리.md`) 레포에 올려 달라고 요청.
+- AI Hub(design-changes 5번, 엄윤종 회신 11/27 반영): 5-1 본인 PC에서 다운로드 · 가공(이유: 스크립트가 3.12 전용) 기록 끝, 결정 기록 문서는 PR #12에 추가됨. 5-2 팀 공용 계정 보관 — 전제 확인 대기: ① 서버의 AI Hub 데이터셋마다 최의찬 · 엄윤종 둘 다 승인 ② t26112 접속 정보는 두 사람만 ③ 데이터셋별 약관에 공동 이용 제한 없음.
+  - **`/home/t26112/easyq-data/upload/ds-draft-5-inputs` · `ds-draft-5`에 AI Hub 파일 있음 → 에이전트는 열기 · 복사 · 내려받기 금지**(서버 VS Code 확장 포함).
 - 서버 관리자(11/26 문의함, 답변 대기): 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용. (`/data` 없음 → `DATA_ROOT=/home/t26112/easyq-data`로 확정, design-changes 4번)
 
 ## 다음 할 일
-- Claude: 단계 1 · 2 끝(PR #7 · #8). 단계 3 작업 설명 작성함. 단계 4 서버 올리기 안내 `docs/work/server-setup.md`.
-- Codex: 단계 3 시작 가능(3a 조회 API부터, 위 "단계 3 작업 설명").
-- 사람(최의찬): 끝 — rc-v1 zip 엄윤종 전달, slides-v4 코드 요청, 관리자 문의(답변 대기), 로컬 .env를 SQLite · ./data/local로, Gemini 키는 지금 키 · 본인 결제 하나로 개발 · 시연 모두 사용(실배포 없음, 11/26 결정), 설계 변경(design-changes.md) 팀 공유(11/26, 합의 답변 대기 — 3번은 백엔드 v1.4 임대 방식으로 바뀜). 남음 — 단계 4 서버 올리기, [백엔드] 회신 보내기(바탕화면 `[백엔드]_v1.4_회신.md`, 레포에는 안 둠), PR #12 AI Hub 위치 엄윤종 확인. (검증 480 검수는 엄윤종 단독으로 바뀜)
+- Claude: 단계 1 · 2 끝(PR #7 · #8), 3a 끝(PR #11). 11/27 백엔드 v1.4 반영 + Codex 전체 검토 중 작은 수정 반영(브랜치 `feature/v14-reply`): 입력 오류 601/603, `.env` 절대 경로, prod API 설명서 끔, AI Hub 행 차단 강화, 검색 개수 검사, 깨진 status.json 격리. 나머지 지적은 단계 3b · 5 · 6에 적음.
+- Codex: 3b 시작 가능 — 단, 위 3b의 C4(교안 필드) · C6(status 값)을 먼저 정한다.
+- 사람(최의찬): 끝 — rc-v1 zip 엄윤종 전달, slides-v4 코드 요청, 관리자 문의(답변 대기), 로컬 .env를 SQLite · ./data/local로, Gemini 키는 지금 키 · 본인 결제 하나로 개발 · 시연 모두 사용(실배포 없음, 11/26 결정), 설계 변경(design-changes.md) 팀 공유(11/26, 합의 답변 대기 — 3번은 백엔드 v1.4 임대 방식으로 바뀜). 11/27 [백엔드] v1.4 회신 · 엄윤종 PR #12 리뷰 메시지 보냄. 남음 — 단계 4 서버 올리기, AI Hub 5-2 전제 3가지 확인. (검증 480 검수는 엄윤종 단독으로 바뀜)
 
 ## 나중에 (Should, v1.0 이후)
 - 교안 멀티모달(rc-v2): 교안을 올릴 때 쪽 이미지를 비전 모델로 글로 바꿔(그림 설명 · 표 → 마크다운 · 수식 → LaTeX) 쪽 텍스트 뒤에 붙인다. 이후 검색 · 판정 · 답변은 그대로.

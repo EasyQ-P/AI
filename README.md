@@ -17,12 +17,15 @@ worker의 STT · 검색 · 판정 · 답변 처리(R2~R4)는 backend 레포에�
 ```bash
 uv sync --all-packages --group dev          # 로컬(GPU 없이)
 uv sync --all-packages --group dev --extra gpu   # 학과 서버(GPU)
-cp .env.example .env
-docker compose -f docker-compose.dev.yml up -d registry-db   # 레지스트리 DB (로컬)
+cp .env.example .env          # 로컬은 TRAINER_ENV=dev, DATA_ROOT=./data/local 로 바꾼다
+uv run alembic -c trainer/alembic.ini upgrade head          # 레지스트리 DB(SQLite 파일 {DATA_ROOT}/registry/registry.db)
 uv run uvicorn app.main:app --app-dir trainer --host 127.0.0.1 --port 8000
 ```
 
-확인: `curl -H "X-API-Key: change-me" http://127.0.0.1:8000/api/v1/health`
+확인: `curl -H "X-API-Key: change-me" http://127.0.0.1:8000/api/v1/health` (API 설명서는 개발 모드에서만 `/api/v1/docs`)
+
+레지스트리 DB는 기본이 SQLite 파일이다(학과 서버 규칙, `docs/work/design-changes.md` 2번). PostgreSQL로 시험해 보려면 선택으로 `docker compose -f docker-compose.dev.yml up -d registry-db`를 띄우고 `REGISTRY_DB_URL`을 넣는다.
+학과 서버에 올리는 순서는 `docs/work/server-setup.md`.
 
 ```bash
 uv run ruff check .
