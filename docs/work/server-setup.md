@@ -109,7 +109,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/health    
 KEY=$(grep '^TRAINER_API_KEY=' .env | cut -d= -f2-)
 curl -s -H "X-API-Key: $KEY" http://127.0.0.1:8000/api/v1/health; echo
 unset KEY
-# {"result_code":200,...,"data":{"status":"ok","mode":"LLM_ONLY","serving_version":null,"threshold":null,"gpu_busy":false}}
+# {"result_code":200,...,"data":{"status":"ok","mode":"LLM_ONLY","serving_version":null,"threshold":null,"gpu_busy":false,"model_loaded":false}}
 ```
 
 끄기(우리가 띄운 프로세스만):

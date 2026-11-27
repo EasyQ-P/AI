@@ -57,6 +57,7 @@ def test_empty_database_lists_and_health(api, monkeypatch):
         "serving_version": None,
         "threshold": None,
         "gpu_busy": False,
+        "model_loaded": False,
     }
     assert client.get("/api/v1/datasets", headers=KEY).json()["data"] == {
         "datasets": [],
@@ -265,10 +266,12 @@ def test_health_uses_latest_deployment_loaded_state_and_gpu_job(api, monkeypatch
         "serving_version": "judge-v1",
         "threshold": 0.62,
         "gpu_busy": True,
+        "model_loaded": False,
     }
 
     monkeypatch.setattr(health_api, "serving_state", lambda: ServingState(loaded=True))
-    assert client.get("/api/v1/health", headers=KEY).json()["data"]["status"] == "ok"
+    data = client.get("/api/v1/health", headers=KEY).json()["data"]
+    assert (data["status"], data["model_loaded"]) == ("ok", True)
 
 
 @pytest.mark.parametrize("path", [

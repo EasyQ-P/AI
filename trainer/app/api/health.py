@@ -36,4 +36,5 @@ def health(session: Annotated[Session, Depends(get_session)]) -> dict:
         "serving_version": serving_version,
         "threshold": threshold,
         "gpu_busy": get_runner().gpu_job(session) is not None,
+        "model_loaded": loaded,  # 백엔드 v1.4 R2: 판정 모델이 GPU에 올라가 있는지(임대 방식, design-changes 3번)
     })

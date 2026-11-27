@@ -44,14 +44,15 @@
     - **백엔드에 알릴 것:** 교안을 넣을 때 쪽마다 글상자 목록(pymupdf `get_text("blocks", sort=True)`의 글 블록, PPTX는 슬라이드 문단)으로 넘겨야 학습 데이터와 같은 조각이 나온다. 글자열로 넘기면 빈 줄 기준으로만 나뉜다. 서비스 교안에는 OCW 패턴을 넘기지 않는다
     - **엄윤종에게 제안:** `ocw_slide_chunks.py`가 `retrieval.chunking`(`page_paragraphs` · `chunk_slides_with_stats` · OCW 패턴)을 불러 쓰면 규칙이 한 곳에만 있게 된다(PDF · zip 읽기만 스크립트에 남김)
   - A-2. ~~다르면 검증 후보 · 어려운 오답 다시 만들기~~ → 필요 없음(위)
-  - A-3. 검증 480 검수(2인 교차) — **지금 시작 가능**(후보가 slides-v4 기준이라 바뀌지 않음) (최의찬 + 엄윤종)
+  - A-3. 검증 480 검수 — 엄윤종 단독 전수 확인(설계서 3.3.1, 11/27 결정, 최의찬 할 일에서 뺌). 어려운 오답 2,100건(대본 1,719 + 교안 381)은 rc-v1 그대로 사용(재생성 불필요, 엄윤종 정정)
 - [~] 3. 기본 API: 3a 조회(7.4.1 · 7.4.3 · 7.4.4 · 7.4.24 · 7.4.25 · 7.4.27) → 3b 데이터셋 등록(7.4.2) (Codex, 브랜치 `feature/basic-api`)
   - [x] 3a(11/26): Codex 구현 → Claude 리뷰 · 수정(DB 쓰는 핸들러를 `async def` → `def`로, 이벤트 루프 막힘 방지). `app/core/timefmt.py`(`to_kst_iso`), 테스트 `trainer/tests/test_api_read.py`
   - 시험 설정: `conftest.py`가 `DATA_ROOT`를 임시 폴더로 바꾸고 `api` fixture(임시 SQLite + 마이그레이션)를 둔다. API 시험은 이 fixture를 쓴다(실제 레지스트리를 건드리지 않게)
   - Codex 실행 메모: Codex는 git 기록을 쓸 수 없다 → Claude가 `dev`에서 worktree(`.claude/worktrees/<이름>`)를 만들고 Codex는 파일만 고친다. 커밋은 Claude가 리뷰 후
   - [ ] 3b 데이터셋 등록(7.4.2)
 - [ ] 4. 학과 서버 1차 올리기: `docs/work/server-setup.md`(`pip --target`, API 실행, SSH 터널 확인) (최의찬 + Claude, 바로 시작 가능)
-- [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 강연 중 적재 · 해제, 800 ms 측정 (Claude, 4 · 관리자 · 팀 답변 후)
+- [ ] 5. 판정 추론 서버(:8001): 사전학습 bge-reranker fp16, 적재 임대(lease) 방식, 800 ms 측정 (Claude, 4 · 관리자 · 팀 답변 후)
+  - 백엔드 v1.4 요청(11/27 수락, design-changes 3번): R1 `POST /judge-model/keepalive` → `{loaded, loading, expires_at}`(워커가 LIVE 강의가 있는 동안 1분마다, 마지막 요청 5분 뒤 해제, GPU 작업 중이면 609) · R2 `/health`에 `model_loaded`(**11/27 반영**) · R3 7.4.26은 적재 안 됐으면 바로 611
   - 5-1. LLM_ONLY 판정 프롬프트 `llm-only-v1` 확정: 서비스 대체 판정과 베이스라인 ③이 같은 프롬프트(τ_LLM). 원본 위치 제안 `retrieval` 패키지 (Claude + 팀)
 - [ ] 6. 학습 한 바퀴: 학습 → 평가 → fp16 변환 → 등록 → 서빙 전환 · 롤백 (Claude, 테스트 Codex) — **엄윤종 최종 데이터셋** · 3b · 5 · 5-1 필요
 - [ ] 7. 백엔드 연동: EC2 → SSH 터널 → 판정 호출, 시간 초과 대체 (최의찬 + 조현준 + Claude) — 6 · 조현준 합의 필요
@@ -59,7 +60,7 @@
 
 ```
 지금 동시에: A · 3a · 4
-A-3 검수 → 엄윤종 최종 데이터셋 ┐  
+A-3 검수(엄윤종) → 엄윤종 최종 데이터셋 ┐  
 3a → 3b                                      ├→ 6 → 7
 4 → 5 (+ 5-1)                                ┘
 ```
@@ -69,8 +70,9 @@ A-3 검수 → 엄윤종 최종 데이터셋 ┐
 |---|---|---|
 | slides-v4 청킹 코드 | A 비교 | push됨(`origin/feature/dataset`, dev PR 없음 → PR 요청) |
 | es-vN 파일 형식 | 3b | `build_eval_slides.py` → `eval_reference_chunks.jsonl`(lecture_id · source_key · page_no · chunk_index · text) + `meta.json` |
-| 어려운 오답 · 재확인 라벨 | 학습셋 반영 | 대기 |
-| 최종 train · validation · test.jsonl | 서버 `/home/t26112/easyq-data/upload/<폴더>/`에 두면 7.4.2 등록 → 6 | **일정 확인 필요** |
+| 어려운 오답 · 재확인 라벨 | 학습셋 반영 | 어려운 오답은 rc-v1 2,100건 그대로(11/27) · 재확인 라벨 대기 |
+| 데이터 구축 스크립트 | 리뷰 | PR #12 열림(11/27). AI Hub 처리 위치가 설계 3.1.3 · AGENTS와 다름(본인 PC에서 처리) · 결정 기록 `docs/notes/AIHub_다운로드_정리.md`가 레포에 없음 → 팀 결정 · design-changes 기록 필요 |
+| 최종 train · validation · test.jsonl | 서버 `/home/t26112/easyq-data/upload/<폴더>/`에 두면 7.4.2 등록 → 6 | train 11/27 저녁 목표 · validation은 480 검수 뒤 · test 시작 전 |
 | 시험셋 자체 녹음 강의 | 시험셋 포함 | 대기 |
 
 ### 단계 3 작업 설명 (Codex)
@@ -116,13 +118,15 @@ A-3 검수 → 엄윤종 최종 데이터셋 ┐
 
 ## 질문 (답이 필요한 것)
 - `reg_datasets.status` 값 목록이 설계서(8.2.38 · 7.4.3)에 없다. 지금은 제약 없이 문자열. 예: READY / ARCHIVED 중 무엇을 쓸지 정하면 CHECK 추가.
-- 팀 합의: 레지스트리 DB SQLite, 판정 모델 강연 중에만 적재(백엔드가 강연 시작 · 종료를 알려야 함). `docs/work/design-changes.md` 참고.
+- 팀 합의: 레지스트리 DB SQLite, 판정 모델 적재는 임대 방식(백엔드 v1.4 제안 수락, 워커가 1분마다 keepalive). `docs/work/design-changes.md` 참고.
+- 백엔드 Q8 키워드 색인: 백엔드가 PostgreSQL `tsvector`를 쓰면 rc-v1(Kiwi BM25)과 검색 결과가 달라 rc-v1이라 기록하면 안 된다. 백엔드가 `retrieval` 패키지의 Kiwi BM25를 쓰도록 제안 → 팀 합의 필요.
+- PR #12 AI Hub 처리 위치(본인 PC → 서버 업로드 뒤 삭제)를 허용할지: 설계 3.1.3 · AGENTS "학과 서버 밖 반출 금지"와 충돌.
 - 서버 관리자(11/26 문의함, 답변 대기): 로컬 API 상시 실행, SQLite 파일, 강연 중 GPU 0번 사용. (`/data` 없음 → `DATA_ROOT=/home/t26112/easyq-data`로 확정, design-changes 4번)
 
 ## 다음 할 일
 - Claude: 단계 1 · 2 끝(PR #7 · #8). 단계 3 작업 설명 작성함. 단계 4 서버 올리기 안내 `docs/work/server-setup.md`.
 - Codex: 단계 3 시작 가능(3a 조회 API부터, 위 "단계 3 작업 설명").
-- 사람(최의찬): 끝 — rc-v1 zip 엄윤종 전달, slides-v4 코드 요청, 관리자 문의(답변 대기), 로컬 .env를 SQLite · ./data/local로, Gemini 키는 지금 키 · 본인 결제 하나로 개발 · 시연 모두 사용(실배포 없음, 11/26 결정), 설계 변경(design-changes.md) 팀 공유(11/26, 합의 답변 대기 — 특히 3번 강연 중 GPU 적재는 백엔드 호출 필요). 남음 — 검증 480 검수.
+- 사람(최의찬): 끝 — rc-v1 zip 엄윤종 전달, slides-v4 코드 요청, 관리자 문의(답변 대기), 로컬 .env를 SQLite · ./data/local로, Gemini 키는 지금 키 · 본인 결제 하나로 개발 · 시연 모두 사용(실배포 없음, 11/26 결정), 설계 변경(design-changes.md) 팀 공유(11/26, 합의 답변 대기 — 3번은 백엔드 v1.4 임대 방식으로 바뀜). 남음 — 단계 4 서버 올리기, [백엔드] 회신 보내기(초안 `docs/work/reply-backend-v14.md`), PR #12 AI Hub 위치 팀 결정. (검증 480 검수는 엄윤종 단독으로 바뀜)
 
 ## 나중에 (Should, v1.0 이후)
 - 교안 멀티모달(rc-v2): 교안을 올릴 때 쪽 이미지를 비전 모델로 글로 바꿔(그림 설명 · 표 → 마크다운 · 수식 → LaTeX) 쪽 텍스트 뒤에 붙인다. 이후 검색 · 판정 · 답변은 그대로.
